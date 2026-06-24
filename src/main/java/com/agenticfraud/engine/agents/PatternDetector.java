@@ -87,6 +87,17 @@ public class PatternDetector extends AbstractFraudAgent {
       prompt.append("\n");
     }
 
+    // rag context to the prompt
+    if (context.ragContext() != null && !context.ragContext().isEmpty()) {
+      Object promptContext = context.ragContext().get("promptContext");
+      if (promptContext != null && !promptContext.toString().isBlank()) {
+        prompt.append(promptContext.toString());
+        prompt.append("\n");
+        prompt.append(
+            "As a PATTERN DETECTOR: use these cases to identify known attack signatures.\n\n");
+      }
+    }
+
     prompt.append("As a PATTERN DETECTOR, focus on:\n");
     prompt.append("1. Does the VELOCITY pattern match known attack vectors?\n");
     prompt.append("2. Are there card testing indicators (small amounts)?\n");

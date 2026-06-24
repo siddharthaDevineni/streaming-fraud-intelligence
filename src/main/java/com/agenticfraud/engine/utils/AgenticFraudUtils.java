@@ -19,7 +19,7 @@ public class AgenticFraudUtils {
       // Look for RISK_SCORE: pattern
       if (analysis.contains("RISK_SCORE:")) {
         String scorePart = analysis.substring(analysis.indexOf("RISK_SCORE:") + 11);
-        String scoreStr = scorePart.split("\\n")[0].trim();
+        String scoreStr = scorePart.split("\\n")[0].trim().replaceAll("[^0-9.]", "");
         return Double.parseDouble(scoreStr);
       }
 

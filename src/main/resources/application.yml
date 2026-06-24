@@ -8,7 +8,7 @@ spring:
   # Spring AI Configuration: OpenAI/Groq configuration (for default profile)
   ai:
     openai:
-      api-key: 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
+      api-key: ${GROQ_API_KEY}
       base-url: https://api.groq.com/openai
       chat:
         options:

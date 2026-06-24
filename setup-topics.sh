@@ -40,6 +40,13 @@ echo ""
 echo "Creating Feedback topic..."
 create_topic "analyst-feedback" 3 1
 
+# Python ML topics
+echo ""
+echo "Creating Python ML topics..."
+create_topic "enriched-transactions" 3 1
+create_topic "ml-predictions" 3 1
+create_topic "model-health" 3 1
+
 # List all topics
 echo ""
 echo "Topics created successfully! Current topics:"

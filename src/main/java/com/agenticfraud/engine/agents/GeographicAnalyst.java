@@ -114,6 +114,17 @@ public class GeographicAnalyst extends AbstractFraudAgent {
     }
     prompt.append("\n");
 
+    // rag context to the prompt
+    if (context.ragContext() != null && !context.ragContext().isEmpty()) {
+      Object promptContext = context.ragContext().get("promptContext");
+      if (promptContext != null && !promptContext.toString().isBlank()) {
+        prompt.append(promptContext.toString());
+        prompt.append("\n");
+        prompt.append(
+            "As a GEOGRAPHIC ANALYST: if similar cases show the same unknown location pattern, this is confirmed geo-anomaly.\n\n");
+      }
+    }
+
     // Geographic risk assessment framework
     prompt.append("As a GEOGRAPHIC ANALYST, evaluate:\n");
     prompt.append("1. LOCATION CONSISTENCY: Does location match customer baseline?\n");

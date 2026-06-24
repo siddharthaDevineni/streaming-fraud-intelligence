@@ -51,4 +51,23 @@ zookeeper/
 
 # Environment variables
 .env
-.env.local
+.env.local.env
+.venv
+
+# Python
+python-ml/.venv/
+python-ml/__pycache__/
+python-ml/**/__pycache__/
+python-ml/**/*.pyc
+python-ml/.env
+
+# ML models (too large for git, use MLflow instead)
+python-ml/models/*.pkl
+python-ml/models/*.keras
+python-ml/models/*.json
+
+# ChromaDB local vector store
+python-ml/chroma_db/
+
+# MLflow local runs
+python-ml/mlruns/

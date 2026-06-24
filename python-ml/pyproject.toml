@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "streaming-fraud-intelligence"
+version = "1.0.0"
+description = "Real-Time ML Inference + Agentic AI on Apache Kafka"
+requires-python = ">=3.11"
+
+dependencies = [
+    # ── Kafka ──────────────────────────────────────────────────────────────
+    "confluent-kafka==2.3.0",           # Kafka consumer/producer
+
+    # ── Feature Engineering ────────────────────────────────────────────────
+    "polars==0.20.0",                   # Fast DataFrames (replaces Pandas)
+    "pydantic==2.5.0",                  # Schema validation for Kafka messages
+    "pydantic-settings==2.1.0",         # Extension that adds BaseSettings class from .env
+
+    # ── ML Inference ───────────────────────────────────────────────────────
+    "xgboost==2.0.3",                   # Primary fraud scoring model
+    "tensorflow==2.15.0",               # LSTM sequence model
+    "scikit-learn==1.3.2",              # Preprocessing, partial_fit online learning
+    "shap==0.44.0",                     # Explainability for XGBoost predictions
+    "joblib==1.3.2",                    # Model serialization
+
+    # ── LLM / Agentic Layer ────────────────────────────────────────────────
+    "langchain==0.1.0",                 # Agent orchestration
+    "langchain-openai==0.0.5",          # Groq via OpenAI-compatible API
+    "langchain-community==0.0.10",      # Community integrations
+    "langmem==0.0.4",                   # Long-term agent memory
+    "chromadb==0.4.22",                 # Vector store for RAG fraud cases
+    "pydantic-ai==0.0.8",              # Typed agent outputs, replaces regex parsing
+
+    # ── Online Learning ────────────────────────────────────────────────────
+    "river==0.21.0",                    # Incremental ML, updates from analyst-feedback
+
+    # ── MLOps & Monitoring ─────────────────────────────────────────────────
+    "mlflow==2.9.2",                    # Experiment tracking, model versioning
+    "evidently==0.4.13",                # Feature drift detection on streams
+    "streamlit==1.29.0",                # Live fraud dashboard
+
+    # ── API Serving ────────────────────────────────────────────────────────
+    "fastapi==0.108.0",                 # Serve ML model as REST API
+    "uvicorn==0.25.0",                  # ASGI server for FastAPI
+
+    # ── Utilities ──────────────────────────────────────────────────────────
+    "python-dotenv==1.0.0",             # Load .env for API keys
+    "structlog==23.3.0",                # Structured logging (matches Java style)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==7.4.3",
+    "pytest-asyncio==0.23.2",
+    "ruff==0.1.9",                      # Fast linter (replaces flake8)
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

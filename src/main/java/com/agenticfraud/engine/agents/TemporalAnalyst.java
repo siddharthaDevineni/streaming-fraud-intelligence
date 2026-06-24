@@ -82,6 +82,17 @@ public class TemporalAnalyst extends AbstractFraudAgent {
       prompt.append("\n");
     }
 
+    // rag context to the prompt
+    if (context.ragContext() != null && !context.ragContext().isEmpty()) {
+      Object promptContext = context.ragContext().get("promptContext");
+      if (promptContext != null && !promptContext.toString().isBlank()) {
+        prompt.append(promptContext.toString());
+        prompt.append("\n");
+        prompt.append(
+            "As a TEMPORAL ANALYST: if similar cases occurred at the same hour, note the timing signature.\n\n");
+      }
+    }
+
     prompt.append("As a TEMPORAL ANALYST, focus on:\n");
     prompt.append("1. Does the VELOCITY indicate automated/bot activity?\n");
     prompt.append("2. Are transaction intervals suspicious (too fast/regular)?\n");

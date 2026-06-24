@@ -15,6 +15,8 @@ import org.apache.kafka.common.serialization.StringSerializer;
 /**
  * Test Data Generator for Streaming-Intelligent Fraud Detection Generates realistic test
  * transactions and customer profiles
+ * <p>
+ * Run as mvn exec:java -Dexec.mainClass="com.agenticfraud.engine.testing.TestDataGenerator" -Dexec.classpathScope="test"
  */
 public class TestDataGenerator {
 
@@ -30,7 +32,8 @@ public class TestDataGenerator {
 
     // Generate customer profiles first
     System.out.println("Generating Customer Profiles...");
-    List<CustomerProfile> customerProfiles = generateCustomerProfiles(2);
+    List<CustomerProfile> customerProfiles = generateCustomerProfiles(1);
+//    List<CustomerProfile> customerProfiles = generateCustomerProfiles(2);
     sendCustomerProfiles(producer, customerProfiles);
 
     System.out.println("Generating Test Transactions...");
@@ -72,7 +75,8 @@ public class TestDataGenerator {
   private static List<CustomerProfile> generateCustomerProfiles(int count) throws Exception {
     List<CustomerProfile> profiles = new ArrayList<>();
 
-    List<String> riskLevels = List.of("LOW", "MEDIUM", "HIGH");
+    List<String> riskLevels = List.of("HIGH");
+//    List<String> riskLevels = List.of("LOW", "MEDIUM", "HIGH");
     List<String> locations = List.of("New York", "Los Angeles", "Chicago", "Houston", "Phoenix");
     List<String> categories = List.of("GROCERY", "GAS_STATION", "RESTAURANT", "RETAIL", "ONLINE");
 

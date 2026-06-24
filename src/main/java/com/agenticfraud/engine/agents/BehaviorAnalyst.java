@@ -79,6 +79,17 @@ public class BehaviorAnalyst extends AbstractFraudAgent {
     prompt.append(transaction.toAnalysisText());
     prompt.append("\n\n");
 
+    // rag context to the prompt
+    if (context.ragContext() != null && !context.ragContext().isEmpty()) {
+      Object promptContext = context.ragContext().get("promptContext");
+      if (promptContext != null && !promptContext.toString().isBlank()) {
+        prompt.append(promptContext.toString());
+        prompt.append("\n");
+        prompt.append(
+            "As a BEHAVIOR ANALYST: if similar cases show same velocity+device pattern, weight heavily.\n\n");
+      }
+    }
+
     prompt.append("As a BEHAVIOR ANALYST, focus on:\n");
     prompt.append("1. How does the VELOCITY pattern affect behavioral risk?\n");
     prompt.append("2. Does spending amount deviate from customer baseline?\n");

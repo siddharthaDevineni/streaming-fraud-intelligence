@@ -107,8 +107,7 @@ public class RiskAssessor extends AbstractFraudAgent {
       prompt.append("VELOCITY RISK MULTIPLIER:\n");
       prompt.append(
           String.format(
-              "HIGH VELOCITY: %d transactions in 5 minutes\n",
-              context.recentTransactionsCount()));
+              "HIGH VELOCITY: %d transactions in 5 minutes\n", context.recentTransactionsCount()));
       prompt.append("Risk multiplier: 1.5x (rapid transaction activity)\n");
       prompt.append("Potential risk: Account takeover or card testing\n\n");
     }
@@ -125,6 +124,17 @@ public class RiskAssessor extends AbstractFraudAgent {
         String.format(
             "- Channel: %s\n", transaction.metadata().getOrDefault("channel", "UNKNOWN")));
     prompt.append("\n");
+
+    // rag context to the prompt
+    if (context.ragContext() != null && !context.ragContext().isEmpty()) {
+      Object promptContext = context.ragContext().get("promptContext");
+      if (promptContext != null && !promptContext.toString().isBlank()) {
+        prompt.append(promptContext.toString());
+        prompt.append("\n");
+        prompt.append(
+            "As a RISK ASSESSOR: confirmed similar cases are ground truth — weight your risk score upward.\n\n");
+      }
+    }
 
     // Risk assessment framework
     prompt.append("As a RISK ASSESSOR, calculate comprehensive risk:\n");

@@ -48,7 +48,7 @@ public record FraudDecision(
     return confidenceScore >= 0.8;
   }
 
-  public boolean requireManuelReview() {
+  public boolean requireManualReview() {
     return confidenceScore < 0.7 && confidenceScore > 0.3;
   }
 }

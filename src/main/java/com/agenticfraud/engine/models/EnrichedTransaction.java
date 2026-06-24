@@ -1,13 +1,17 @@
 package com.agenticfraud.engine.models;
 
 public record EnrichedTransaction(
-    Transaction transaction,
-    CustomerProfile customerProfile,
-    Long velocityCount) {
+    Transaction transaction, CustomerProfile customerProfile, Long velocityCount) {
 
   public StreamingContext toStreamingContext() {
     String contextSummary = buildContextSummary();
-    return new StreamingContext(velocityCount, customerProfile, contextSummary);
+    return new StreamingContext(
+        velocityCount,
+        customerProfile,
+        contextSummary,
+        null, // filled in by FraudStreams join
+        null // filled in by FraudStreams join
+        );
   }
 
   private String buildContextSummary() {
