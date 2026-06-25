@@ -44,6 +44,7 @@ Five layers running concurrently and feeding each other:
 Each layer feeds the next and the last feeds back into the first —
 analyst decisions flow back through Kafka into ChromaDB and River,
 making the system more accurate over time without manual intervention.
+
 ---
 
 ## The Problem
@@ -71,6 +72,7 @@ making the system more accurate over time without manual intervention.
 
 This system addresses both gaps: Kafka Streams provides the real-time context
 that LLMs lack, and RAG provides the institutional memory that rules cannot encode.
+
 ---
 
 ## The Solution: Streaming-Intelligent AI
@@ -90,10 +92,10 @@ EnrichedTransaction = {
   ragContext:      { casesFound: 3, topSimilarity: 82%, pattern: "card_testing" } // from Python
 }
 ```
-
 ---
 
 ## Architecture
+
 ![diagram](docs/mermaid-diagram-2026-06-24-192254.png)
 
 The diagram shows two concurrent paths from the `transactions` topic — the
@@ -106,6 +108,7 @@ count yet. The Python ML layer (Steps 6–8) runs as a separate process,
 bridged via two Kafka topics: `enriched-transactions` (Java → Python) and
 `ml-predictions` (Python → Java), closing a feedback loop that includes
 ChromaDB RAG retrieval and River online learning.
+
 ---
 
 ## LLM Agent Pipeline (10 LLM calls per transaction)
@@ -267,7 +270,6 @@ cd python-ml
 streamlit run monitoring/dashboard.py
 # opens at http://localhost:8501
 ```
-
 ---
 
 ## Real Detection Examples
