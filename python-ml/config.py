@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -37,8 +37,17 @@ class Settings(BaseSettings):
     fraud_risk_threshold: float = 0.6
     high_confidence_threshold: float = 0.8
 
-    class Config:
-        env_file = "../.env"
+    # LangSmith observability
+    langchain_tracing: str = "false"
+    langchain_api_key: str = ""
+    langchain_project: str = "streaming-fraud-intelligence"
+    langchain_endpoint: str = "https://api.smith.langchain.com"
+
+    model_config = SettingsConfigDict(
+        env_file="../.env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 settings = Settings()
