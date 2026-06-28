@@ -14,9 +14,12 @@ Every enriched transaction gets:
 
 import joblib
 import json
+from dotenv import load_dotenv
+load_dotenv()
 import numpy as np
 import shap
 import structlog
+from langsmith import traceable
 import time
 from agents.rag_retriever import RAGRetriever
 from config import settings
@@ -83,6 +86,7 @@ class MLInferenceService:
                            hint="Run training/train_xgboost.py first")
             return None
 
+    @traceable(name="xgboost-inference-shap", run_type="chain")
     def _score(self, features: dict) -> tuple[float, dict]:
         """
         Run XGBoost inference and SHAP explanation.
@@ -150,6 +154,16 @@ class MLInferenceService:
             self.consumer.close()
             self.producer.flush()
 
+    @traceable(name="chromadb-rag-retrieval", run_type="retriever")
+    def _traced_rag_retrieve(self, features: dict, customer_id: str, n_results: int) -> list[dict]:
+        """LangSmith-traced wrapper around RAG retrieval."""
+        return self.rag_retriever.retrieve(
+            features=features,
+            customer_id=customer_id,
+            n_results=n_results,
+        )
+
+    @traceable(name="fraud-ml-pipeline", run_type="chain")
     def _process_message(self, msg):
         start_ms = time.time() * 1000
 
@@ -177,7 +191,8 @@ class MLInferenceService:
             fraud_score, shap_top3 = self._score(features)
 
             # RAG retrieval — find similar confirmed fraud cases
-            similar_cases = self.rag_retriever.retrieve(
+            # wrapped for LangSmith tracing
+            similar_cases = self._traced_rag_retrieve(
                 features=features,
                 customer_id=enriched.transaction.customerId,
                 n_results=3,

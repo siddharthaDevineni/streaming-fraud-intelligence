@@ -16,10 +16,12 @@ Flow:
       → injected into each agent's buildStreamingAnalysisPrompt()
 """
 
+import time
+
 import chromadb
 import structlog
-import time
 from config import settings
+from langsmith import traceable
 from sentence_transformers import SentenceTransformer
 
 logger = structlog.get_logger()
@@ -130,7 +132,7 @@ class RAGRetriever:
         customer risk tier: {customer_risk}"""
 
     # ── Core retrieval ────────────────────────────────────────────────────────
-
+    @traceable(name="rag-retrieval", run_type="retriever")
     def retrieve(
             self,
             features: dict,
@@ -166,7 +168,10 @@ class RAGRetriever:
         # (velocity=1) from dominating results for card_testing (velocity=15)
         # scenarios where the two patterns share 16 of 19 features
         is_high_velocity = bool(features.get("is_high_velocity", 0))
-        velocity_filter = {"isHighVelocity": 1} if is_high_velocity else {"isHighVelocity": 0}
+        velocity_filter = (
+            {"isHighVelocity": {"$eq": 1}} if is_high_velocity
+            else {"isHighVelocity": {"$eq": 0}}
+        )
 
         if customer_id:
             # Try customer-specific first — if CUST-001 was flagged before,
@@ -174,7 +179,12 @@ class RAGRetriever:
             customer_results = self._query_chromadb(
                 query_embedding=query_embedding,
                 n_results=min(2, n_results),
-                where={"customerId": customer_id, "isHighVelocity": int(is_high_velocity)},
+                where={
+                    "$and": [
+                        {"customerId": {"$eq": customer_id}},
+                        {"isHighVelocity": {"$eq": int(is_high_velocity)}},
+                    ]
+                }
             )
         else:
             customer_results = []
@@ -186,6 +196,20 @@ class RAGRetriever:
             n_results=general_n + 2,  # fetch extra, deduplicate below
             where=velocity_filter,
         )
+
+        # If velocity filter returned nothing (cold start — no cases with matching
+        # isHighVelocity flag yet), fall back to unfiltered to avoid returning 0 cases
+        if not customer_results and not general_results:
+            logger.debug(
+                "velocity_filter_empty_falling_back_to_unfiltered",
+                is_high_velocity=is_high_velocity,
+                collection_count=self.collection.count(),
+            )
+            general_results = self._query_chromadb(
+                query_embedding=query_embedding,
+                n_results=n_results + 2,
+                where=None,
+            )
 
         # Merge: customer-specific cases first, then general cases
         # Deduplicate by transactionId
