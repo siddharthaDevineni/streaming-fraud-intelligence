@@ -133,21 +133,28 @@ class AgentCoordinator:
 
         logger.info("enhanced_collaboration_triggered")
 
-        # Phase 2a — velocity collaboration Pattern Detector and Temporal Analyst
+        # Phase 2a + 2b — velocity and profile collaboration in parallel
+        collab_futures = {}
+
         if has_high_velocity:
             logger.info("velocity_collaboration_triggered")
-            velocity_insights = self._velocity_collaboration(transaction)
-            collaborative.extend(velocity_insights)
+            collab_futures["velocity"] = self.executor.submit(
+                self._velocity_collaboration, transaction
+            )
 
-        # Phase 2b — customer profile collaboration between Behavior Analyst and Risk Assessor
         if has_customer_profile:
             logger.info("profile_collaboration_triggered")
-            profile_insights = self._profile_collaboration(
-                transaction, streaming_context
+            collab_futures["profile"] = self.executor.submit(
+                self._profile_collaboration, transaction, streaming_context
             )
-            collaborative.extend(profile_insights)
 
-        # Phase 2c — final consensus from coordinator agent
+        for key, future in collab_futures.items():
+            try:
+                collaborative.extend(future.result())
+            except Exception as e:
+                logger.error(f"{key}_collaboration_failed", error=str(e))
+
+        # Phase 2c — consensus coordinator (after both collaboration rounds)
         collaborative.append(
             self._build_consensus(transaction, streaming_context, phase1_insights)
         )
@@ -230,9 +237,10 @@ class AgentCoordinator:
         - What is the overall fraud risk with all intelligence combined?
         - Key factors from AI analysis, streaming data, and historical cases?
         
-        RISK_SCORE: [0.0-1.0]
-        REASONING: [Streaming-enhanced consensus analysis]
-        RECOMMENDATION: [FRAUD_ALERT|HUMAN_REVIEW|APPROVE]"""
+        You MUST respond in exactly this format with no preamble:
+        RISK_SCORE: [number between 0.0 and 1.0]
+        REASONING: [your analysis in one paragraph]
+        RECOMMENDATION: [FRAUD_ALERT or HUMAN_REVIEW or APPROVE]"""
 
         response = self.llm.invoke(prompt)
         content = response.content
@@ -252,7 +260,7 @@ class AgentCoordinator:
         risk_score = min(1.0, max(0.0, risk_score))
 
         return AgentInsight(
-            agent_name="STREAMING_CONSENSUS_ORCHESTRATOR",
+            agent_name="STREAMING_CONSENSUS_COORDINATOR",
             risk_score=risk_score,
             confidence=risk_score,
             reasoning=reasoning_match.group(1).strip() if reasoning_match else "",

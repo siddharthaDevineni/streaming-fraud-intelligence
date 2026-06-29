@@ -23,6 +23,7 @@ langchain>=0.2.0
 langchain-core>=0.2.0
 langchain-community>=0.2.0
 langsmith>=0.1.77
+langchain-groq>=0.1.0
 
 # Experiment tracking
 mlflow==2.9.2

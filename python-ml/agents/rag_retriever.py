@@ -132,7 +132,6 @@ class RAGRetriever:
         customer risk tier: {customer_risk}"""
 
     # ── Core retrieval ────────────────────────────────────────────────────────
-    @traceable(name="rag-retrieval", run_type="retriever")
     def retrieve(
             self,
             features: dict,
@@ -330,6 +329,7 @@ class RAGRetriever:
 
             lines.append(
                 f"Case {i} (similarity: {similarity_pct}%, "
+                f"pattern: {pattern}, confidence: {confidence:.2f}, "
                 f"confirmed: {embedded_at}, by: {confirmed_by}):"
             )
             # Add the stored case text, indented

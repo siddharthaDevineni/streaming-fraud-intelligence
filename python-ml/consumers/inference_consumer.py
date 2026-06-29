@@ -14,6 +14,7 @@ Every enriched transaction gets:
 
 import joblib
 import json
+from agents.agent_coordinator import AgentCoordinator
 from dotenv import load_dotenv
 load_dotenv()
 import numpy as np
@@ -26,7 +27,7 @@ from config import settings
 from confluent_kafka import Consumer, Producer, KafkaError
 from datetime import datetime, timezone
 from features.engineer import extract_features, FEATURE_COLUMNS
-from models.schemas import EnrichedTransaction, MLPrediction
+from models.schemas import EnrichedTransaction, MLPrediction, CustomerProfile
 from pydantic import ValidationError
 
 logger = structlog.get_logger()
@@ -42,6 +43,7 @@ class MLInferenceService:
         self.model = self._load_model()
         self.scaler = self._load_scaler()
         self.explainer = shap.TreeExplainer(self.model)
+        self.agent_coordinator = AgentCoordinator()
         logger.info("ml_inference_service_started",
                     model_path=settings.xgboost_model_path)
 
@@ -168,10 +170,8 @@ class MLInferenceService:
         start_ms = time.time() * 1000
 
         try:
-            # Deserialize — Pydantic validates the schema from Java
             raw = json.loads(msg.value().decode("utf-8"))
             enriched = EnrichedTransaction(**raw)
-
         except (ValidationError, json.JSONDecodeError) as e:
             logger.error("deserialization_failed",
                          error=str(e),
@@ -184,29 +184,46 @@ class MLInferenceService:
             return
 
         try:
-            # Feature engineering
+            # Step 1 — feature engineering
             features = extract_features(enriched)
 
-            # ML inference + SHAP explanation
+            # Step 2 — XGBoost inference + SHAP
             fraud_score, shap_top3 = self._score(features)
 
-            # RAG retrieval — find similar confirmed fraud cases
-            # wrapped for LangSmith tracing
+            # Step 3 — RAG retrieval (now feeds directly into agents — no KTable lag)
             similar_cases = self._traced_rag_retrieve(
                 features=features,
                 customer_id=enriched.transaction.customerId,
                 n_results=3,
             )
             rag_context = self.rag_retriever.format_for_ml_prediction(similar_cases)
+            rag_context_text = self.rag_retriever.format_for_agent_prompt(similar_cases)
+
+            # Step 4 — build streaming context string for agents
+            streaming_context = self._build_streaming_context(
+                enriched=enriched,
+                fraud_score=fraud_score,
+                rag_context_text=rag_context_text,
+            )
+
+            # Step 5 — agent coordinator (10 LLM calls with full RAG context)
+            transaction_dict = self._enriched_to_dict(enriched, features)
+            fraud_decision = self.agent_coordinator.investigate(
+                transaction=transaction_dict,
+                streaming_context=streaming_context,
+                has_high_velocity=bool(features.get("is_high_velocity", 0)),
+                has_customer_profile=enriched.customerProfile is not None,
+            )
 
             latency_ms = int(time.time() * 1000 - start_ms)
 
+            # Step 6 — publish MLPrediction (Java reads via KTable for routing)
             prediction = MLPrediction(
                 transactionId=enriched.transaction.transactionId,
                 customerId=enriched.transaction.customerId,
                 mlFraudScore=fraud_score,
-                lstmSequenceScore=0.0,  # LSTM added in next iteration
-                combinedScore=fraud_score,  # will be weighted blend once LSTM is added
+                lstmSequenceScore=0.0,
+                combinedScore=fraud_score,
                 modelVersion="xgb-v1",
                 shapExplanation=shap_top3,
                 featuresUsed=features,
@@ -214,13 +231,15 @@ class MLInferenceService:
                 inferenceLatencyMs=latency_ms,
                 timestamp=datetime.now(timezone.utc),
             )
-
             self._publish_prediction(prediction)
 
             logger.info(
                 "inference_complete",
                 transaction_id=enriched.transaction.transactionId,
                 fraud_score=round(fraud_score, 3),
+                is_fraudulent=fraud_decision["isFraudulent"],
+                confidence=round(fraud_decision["confidenceScore"], 3),
+                agents=fraud_decision["agentCount"],
                 latency_ms=latency_ms,
                 top_shap_feature=list(shap_top3.keys())[0] if shap_top3 else None,
             )
@@ -229,6 +248,81 @@ class MLInferenceService:
             logger.error("inference_failed",
                          transaction_id=enriched.transaction.transactionId,
                          error=str(e))
+
+    def _build_streaming_context(
+            self,
+            enriched: EnrichedTransaction,
+            fraud_score: float,
+            rag_context_text: str,
+    ) -> str:
+        """
+        Builds the streaming context string injected into every agent prompt.
+        Mirrors FraudStreams.java StreamingContext.getAIContext().
+        """
+        parts = []
+
+        if enriched.velocityCount and enriched.velocityCount >= 3:
+            parts.append(
+                f"HIGH VELOCITY: {enriched.velocityCount} transactions "
+                f"in the last 5 minutes"
+            )
+
+        if enriched.customerProfile:
+            profile: CustomerProfile = enriched.customerProfile
+            parts.append(
+                f"Customer baseline: ${profile.averageTransactionAmount:.2f} avg, "
+                f"{profile.riskLevel} risk."
+            )
+
+        fraud_pct = round(fraud_score * 100, 1)
+        if fraud_score >= 0.7:
+            parts.append(
+                f"ML MODEL PRE-SCREEN: XGBoost fraud score = {fraud_pct}%. "
+                f"ML strongly indicates fraud."
+            )
+        elif fraud_score >= 0.3:
+            parts.append(
+                f"ML MODEL PRE-SCREEN: XGBoost fraud score = {fraud_pct}%. "
+                f"ML indicates moderate risk."
+            )
+        else:
+            parts.append(
+                f"ML MODEL PRE-SCREEN: XGBoost fraud score = {fraud_pct}%. "
+                f"ML indicates likely legitimate."
+            )
+
+        if rag_context_text:
+            parts.append(rag_context_text)
+
+        return "\n".join(parts)
+
+    def _enriched_to_dict(
+            self,
+            enriched: EnrichedTransaction,
+            features: dict,
+    ) -> dict:
+        """
+        Converts EnrichedTransaction to the dict format AgentCoordinator expects.
+        Mirrors the Transaction.toAnalysisText() pattern from Java.
+        """
+        txn = enriched.transaction
+        profile = enriched.customerProfile or {}
+
+        return {
+            "transactionId": txn.transactionId,
+            "customerId": txn.customerId,
+            "amount": txn.amount,
+            "currency": getattr(txn, "currency", "USD"),
+            "merchantId": txn.merchantId,
+            "merchantCategory": getattr(txn, "merchantCategory", "UNKNOWN"),
+            "location": getattr(txn, "location", "Unknown"),
+            "metadata": getattr(txn, "metadata", {}),
+            "velocityCount": enriched.velocityCount or 0,
+            "hasHighVelocity": bool(features.get("is_high_velocity", 0)),
+            "isAmountUnusual": bool(features.get("is_amount_unusual", 0)),
+            "customerRiskLevel": profile.riskLevel if profile else "UNKNOWN",
+            "customerAvgAmount": profile.averageTransactionAmount if profile else 0,
+        }
 
 if __name__ == "__main__":
     service = MLInferenceService()
