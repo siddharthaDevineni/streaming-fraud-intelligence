@@ -1,9 +1,7 @@
 package com.agenticfraud.engine.controllers;
 
 import com.agenticfraud.engine.models.FraudDecision;
-import com.agenticfraud.engine.models.StreamingContext;
 import com.agenticfraud.engine.models.Transaction;
-import com.agenticfraud.engine.services.AgentCoordinator;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
@@ -19,11 +17,11 @@ public class FraudDetectionController {
 
   private static final Logger logger = LoggerFactory.getLogger(FraudDetectionController.class);
 
-  private final AgentCoordinator agentCoordinator;
+//  private final AgentCoordinator agentCoordinator;
 
-  public FraudDetectionController(AgentCoordinator agentCoordinator) {
-    this.agentCoordinator = agentCoordinator;
-  }
+//  public FraudDetectionController(AgentCoordinator agentCoordinator) {
+//    this.agentCoordinator = agentCoordinator;
+//  }
 
   /**
    * Analyzes a given transaction using streaming-intelligent AI agents to determine if it is
@@ -44,16 +42,15 @@ public class FraudDetectionController {
 
     try {
 
-      StreamingContext restApiContext = createRestApiStreamingContext(transaction);
-
-      FraudDecision decision = agentCoordinator.investigateTransaction(transaction, restApiContext);
-
-      logger.info(
-          "Streaming-intelligent analysis complete: {} (confidence: {:.2f})",
-          decision.isFraudulent() ? "FRAUD" : "LEGITIMATE",
-          decision.confidenceScore());
-
-      return ResponseEntity.ok(decision);
+//      FraudDecision decision = agentCoordinator.investigateTransaction(transaction, restApiContext);
+//
+//      logger.info(
+//          "Streaming-intelligent analysis complete: {} (confidence: {:.2f})",
+//          decision.isFraudulent() ? "FRAUD" : "LEGITIMATE",
+//          decision.confidenceScore());
+//
+//      return ResponseEntity.ok(decision);
+      return null;
     } catch (Exception e) {
       logger.error(
           "Error in streaming-intelligent analysis {}: {}",
@@ -78,10 +75,10 @@ public class FraudDetectionController {
    * @param transaction transaction
    * @return StreamingContext
    */
-  private StreamingContext createRestApiStreamingContext(Transaction transaction) {
-    return new StreamingContext(
-        null, null, "REST API call - Single transaction analysis", null, null);
-  }
+//  private StreamingContext createRestApiStreamingContext(Transaction transaction) {
+//    return new StreamingContext(
+//        null, null, "REST API call - Single transaction analysis", null, null);
+//  }
 
   /**
    * Get information about the streaming-intelligent AI agents

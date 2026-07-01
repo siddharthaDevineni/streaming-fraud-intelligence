@@ -18,8 +18,7 @@ create_topic() {
   --bootstrap-server localhost:9092 \
   --topic "$topic_name" \
   --partitions "$partitions" \
-  --replication-factor "$replication" \
-  --if-not-exists
+  --replication-factor "$replication"
 }
 
 # Input topics
@@ -46,6 +45,7 @@ echo "Creating Python ML topics..."
 create_topic "enriched-transactions" 3 1
 create_topic "ml-predictions" 3 1
 create_topic "model-health" 3 1
+create_topic "fraud-decisions" 3 1
 
 # List all topics
 echo ""

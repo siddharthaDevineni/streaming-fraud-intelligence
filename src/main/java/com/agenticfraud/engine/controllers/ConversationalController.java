@@ -1,11 +1,9 @@
 package com.agenticfraud.engine.controllers;
 
-import com.agenticfraud.engine.services.AgentCoordinator;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,13 +14,13 @@ public class ConversationalController {
 
   private static final Logger logger = LoggerFactory.getLogger(ConversationalController.class);
 
-  private final ChatModel chatModel;
-  private final AgentCoordinator agentCoordinator;
-
-  public ConversationalController(ChatModel chatModel, AgentCoordinator agentCoordinator) {
-    this.chatModel = chatModel;
-    this.agentCoordinator = agentCoordinator;
-  }
+//  private final ChatModel chatModel;
+//  private final AgentCoordinator agentCoordinator;
+//
+//  public ConversationalController(ChatModel chatModel, AgentCoordinator agentCoordinator) {
+//    this.chatModel = chatModel;
+//    this.agentCoordinator = agentCoordinator;
+//  }
 
   /**
    * Chat with the fraud detection system
@@ -62,11 +60,11 @@ public class ConversationalController {
                     """
               .formatted(question);
 
-      String response = chatModel.call(systemPrompt);
+//      String response = chatModel.call(systemPrompt);
 
       Map<String, Object> chatResponse =
           Map.of(
-              "response", response,
+              "response", "null",
               "timestamp", java.time.LocalDateTime.now(),
               "systemCapabilities",
                   List.of(
@@ -128,14 +126,14 @@ public class ConversationalController {
                     """
               .formatted(transactionId);
 
-      String explanation = chatModel.call(explanationPrompt);
+//      String explanation = chatModel.call(explanationPrompt);
 
       Map<String, Object> explanationResponse =
           Map.of(
               "transactionId",
               transactionId,
               "explanation",
-              explanation,
+              "explanation",
               "investigationProcess",
               List.of(
                   "Parallel agent analysis",

@@ -27,7 +27,7 @@ from config import settings
 from confluent_kafka import Consumer, Producer, KafkaError
 from datetime import datetime, timezone
 from features.engineer import extract_features, FEATURE_COLUMNS
-from models.schemas import EnrichedTransaction, MLPrediction, CustomerProfile
+from models.schemas import EnrichedTransaction, MLPrediction, CustomerProfile, AgentInsightOutput, FraudDecisionOutput
 from pydantic import ValidationError
 
 logger = structlog.get_logger()
@@ -231,7 +231,13 @@ class MLInferenceService:
                 inferenceLatencyMs=latency_ms,
                 timestamp=datetime.now(timezone.utc),
             )
+
+            # Publish MLPrediction — consumed by feedback_embedder.py (ChromaDB) and
+            # the Streamlit dashboard for live monitoring. Java no longer reads this
             self._publish_prediction(prediction)
+
+            # Publish FraudDecision (Java reads this for routing — replaces agentCoordinator)
+            self._publish_decision(fraud_decision, prediction)
 
             logger.info(
                 "inference_complete",
@@ -323,6 +329,70 @@ class MLInferenceService:
             "customerRiskLevel": profile.riskLevel if profile else "UNKNOWN",
             "customerAvgAmount": profile.averageTransactionAmount if profile else 0,
         }
+
+    def _publish_decision(self, fraud_decision: dict, prediction: MLPrediction):
+        """
+        Publish FraudDecision to fraud-decisions topic.
+        Java reads this via KTable join and routes directly — no agent calls.
+        Schema must match FraudDecision.java record exactly.
+        """
+        # Convert agent insights to Java-compatible format
+        agent_insights = [
+            AgentInsightOutput(
+                agentType=insight.get("agentName", "UNKNOWN"),
+                agentName=insight.get("agentName", "UNKNOWN"),
+                analysis=insight.get("reasoning", ""),
+                riskScore=insight.get("riskScore", 0.5),
+                confidence=min(insight.get("riskScore", 0.5), 1.0),
+                reasoning=insight.get("reasoning", ""),
+                recommendation=self._risk_to_recommendation(
+                    insight.get("riskScore", 0.5)
+                ),
+                timestamp=datetime.now().replace(tzinfo=None).isoformat(),
+            )
+            for insight in fraud_decision.get("agentInsights", [])
+        ]
+
+        output = FraudDecisionOutput(
+            transactionId=fraud_decision["transactionId"],
+            isFraudulent=fraud_decision["isFraudulent"],
+            confidenceScore=fraud_decision["confidenceScore"],
+            primaryReason=(
+                "AI agents with streaming intelligence detected fraud"
+                if fraud_decision["isFraudulent"]
+                else "Transaction appears legitimate"
+            ),
+            detailedExplanation=fraud_decision.get("explanation", ""),
+            agentInsights=agent_insights,
+            riskFactors={
+                "finalRiskScore": fraud_decision.get("finalRiskScore", 0.0),
+                "mlFraudScore": prediction.mlFraudScore,
+                "ragCasesFound": prediction.ragContext.get("casesFound", 0)
+                if prediction.ragContext else 0,
+            },
+            analyzedAt=datetime.now().replace(tzinfo=None).isoformat(),
+        )
+
+        self.producer.produce(
+            topic=settings.topic_fraud_decisions,
+            key=output.transactionId,
+            value=output.model_dump_json(),
+            callback=self._delivery_callback,
+        )
+        self.producer.poll(0)
+        logger.debug(
+            "fraud_decision_delivered",
+            transaction_id=output.transactionId,
+            is_fraudulent=output.isFraudulent,
+            confidence=round(output.confidenceScore, 3),
+        )
+
+    def _risk_to_recommendation(self, risk_score: float) -> str:
+        if risk_score >= 0.8:
+            return "FRAUD_ALERT"
+        if risk_score >= 0.6:
+            return "HUMAN_REVIEW"
+        return "APPROVE"
 
 if __name__ == "__main__":
     service = MLInferenceService()
