@@ -1,10 +1,10 @@
 package com.agenticfraud.engine.streaming;
 
 import com.agenticfraud.engine.models.*;
-import com.agenticfraud.engine.services.AgentCoordinator;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +28,6 @@ public class FraudStreams {
 
   private static final Logger logger = LoggerFactory.getLogger(FraudStreams.class);
 
-  private final AgentCoordinator agentCoordinator;
   private KafkaStreams kafkaStreams;
 
   // Real-time context makes AI agents smarter
@@ -44,12 +43,12 @@ public class FraudStreams {
     JsonSerde<CustomerProfile> customerProfileSerde = new JsonSerde<>(CustomerProfile.class);
     JsonSerde<EnrichedTransaction> enrichedTransactionJsonSerde =
         new JsonSerde<>(EnrichedTransaction.class);
-    JsonSerde<MLPrediction> mlPredictionSerde = new JsonSerde<>(MLPrediction.class);
-    mlPredictionSerde.configure(
+    JsonSerde<FraudDecision> fraudDecisionSerde = new JsonSerde<>(FraudDecision.class);
+    fraudDecisionSerde.configure(
         Map.of(
             JsonDeserializer.TRUSTED_PACKAGES, "*",
             JsonDeserializer.USE_TYPE_INFO_HEADERS, "false",
-            JsonDeserializer.VALUE_DEFAULT_TYPE, MLPrediction.class.getName()),
+            JsonDeserializer.VALUE_DEFAULT_TYPE, FraudDecision.class.getName()),
         false);
 
     // ================================
@@ -161,117 +160,10 @@ public class FraudStreams {
     logger.info("Python ML bridge configured — enriched-transactions topic ready");
 
     // ================================
-    // ML PREDICTIONS — consume Python XGBoost scores back into Java
-    // ================================
-    // ml-predictions KTable - consumed before analysis via KTable join
-    KTable<String, MLPrediction> mlPredictions =
-        builder.stream("ml-predictions", Consumed.with(Serdes.String(), mlPredictionSerde))
-            .toTable(
-                Materialized.<String, MLPrediction, KeyValueStore<Bytes, byte[]>>as(
-                        "ml-predictions-store")
-                    .withKeySerde(Serdes.String())
-                    .withValueSerde(mlPredictionSerde));
-
-    logger.info("ML predictions KTable configured — XGBoost scores available to agents");
-
-    // ================================
-    // STREAMING-INTELLIGENT ANALYSIS
+    // FRAUD DECISION ROUTING (decisions computed in Python)
     // ================================
     KStream<String, FraudDecision> streamingIntelligentDecisions =
-
-        // Still Sub-topology2 - stateful transformation: enrichment + analysis
-        contextEnrichedTransactions
-            // Join with ML predictions to get XGBoost score: reads ml-predictions-store
-            .leftJoin(
-                // table
-                mlPredictions,
-
-                // ValueJoiner : EnrichedTransaction + MLPrediction = EnrichedTransactionWithML
-                (enriched, mlPrediction) -> {
-                  Double mlScore = mlPrediction != null ? mlPrediction.mlFraudScore() : null;
-
-                  final Map<String, Object> ragContext =
-                      mlPrediction != null ? (Map<String, Object>) mlPrediction.ragContext() : null;
-
-                  if (mlScore != null) {
-                    logger.info(
-                        "ML score received for transaction {}: {}%",
-                        enriched.transaction().transactionId(), Math.round(mlScore * 100));
-                  } else {
-                    logger.debug(
-                        "No ML score yet for transaction {} — agents proceeding without it",
-                        enriched.transaction().transactionId());
-                  }
-
-                  return new EnrichedTransactionWithML(enriched, mlScore, ragContext);
-                }, // end of ValueJoiner
-
-                // joined
-                Joined.with(Serdes.String(), enrichedTransactionJsonSerde, mlPredictionSerde)
-                // no-formatting
-                ) // end of join
-
-            // no-formatting: agents are now aware of ML score - analysis starts
-            .mapValues(
-                (readOnlyKey, enrichedTransactionWithML) -> {
-                  try {
-                    Transaction txn = enrichedTransactionWithML.enriched().transaction();
-
-                    // Build streaming context WITH ML score
-                    StreamingContext streamingContext =
-                        new StreamingContext(
-                            enrichedTransactionWithML
-                                .enriched()
-                                .velocityCount(), // recentTransactionsCount
-                            enrichedTransactionWithML
-                                .enriched()
-                                .customerProfile(), // customerProfile
-                            enrichedTransactionWithML
-                                .enriched()
-                                .toStreamingContext()
-                                .contextSummary(), // contextSummary
-                            enrichedTransactionWithML
-                                .mlFraudScore(), // XGBoost score injected here - mlFraudScore
-                            enrichedTransactionWithML.ragContext());
-
-                    logger.info(
-                        "Analyzing with streaming context for transaction: {}: {}",
-                        txn.transactionId(),
-                        streamingContext.getAIContext());
-
-                    if (enrichedTransactionWithML.enriched().velocityCount() != null
-                        && enrichedTransactionWithML.enriched().velocityCount() > 1) {
-                      logger.info(
-                          "Velocity: {} transactions in last 5 minutes",
-                          enrichedTransactionWithML.enriched().velocityCount());
-                    }
-
-                    if (enrichedTransactionWithML.enriched().customerProfile() != null) {
-                      logger.info(
-                          "Customer Profile: ${} avg, {} risk, {}",
-                          enrichedTransactionWithML
-                              .enriched()
-                              .customerProfile()
-                              .averageTransactionAmount(),
-                          enrichedTransactionWithML.enriched().customerProfile().riskLevel(),
-                          enrichedTransactionWithML
-                                  .enriched()
-                                  .customerProfile()
-                                  .isAmountUnusual(txn.amount())
-                              ? "UNUSUAL AMOUNT"
-                              : "normal amount");
-                    }
-
-                    return agentCoordinator.investigateTransaction(txn, streamingContext);
-
-                  } catch (Exception e) {
-                    logger.error("Error in contextual analysis: {}", e.getMessage(), e);
-                    return AgentCoordinator.createErrorDecision(
-                        enrichedTransactionWithML.enriched().transaction(), e);
-                  }
-                });
-
-    logger.info("AI-enhanced streaming context created");
+            builder.stream("fraud-decisions", Consumed.with(Serdes.String(), fraudDecisionSerde));
 
     // Intelligent Routing: AI-driven decision routing: branch to outputs: fraud-alerts,
     // human-review, approved-transactions

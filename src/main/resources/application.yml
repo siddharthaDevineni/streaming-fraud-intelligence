@@ -5,17 +5,6 @@ spring:
   application:
     name: agentic-fraud-engine
 
-  # Spring AI Configuration: OpenAI/Groq configuration (for default profile)
-  ai:
-    openai:
-      api-key: ${GROQ_API_KEY}
-      base-url: https://api.groq.com/openai
-      chat:
-        options:
-          model: llama-3.1-8b-instant
-          temperature: 0.1
-          max-tokens: 256
-
   # Kafka Configuration
   kafka:
     bootstrap-servers: localhost:9092
@@ -47,5 +36,4 @@ management:
 logging:
   level:
     com.agenticfraud: INFO
-    org.springframework.ai: INFO
     org.apache.kafka: INFO
