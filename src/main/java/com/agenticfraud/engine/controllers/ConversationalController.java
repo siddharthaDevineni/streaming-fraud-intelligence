@@ -1,154 +1,92 @@
 package com.agenticfraud.engine.controllers;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
 
+/**
+ * curl -X POST http://localhost:8080/api/investigation/chat \                                                                                                            -H "Content-Type: application/json" \
+ *   -d '{"question": "How you doing?"}' \
+ *   | python3 -m json.tool
+ *   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+ *                                  Dload  Upload   Total   Spent    Left  Speed
+ * 100   964    0   934  100    30   2283     73 --:--:-- --:--:-- --:--:--  2356
+ * {
+ *     "response": "I'm doing well, thanks for asking. I'm ready to assist with any questions you have about the fraud detection system. \n\nTo confirm, I'll be answering questions based solely on the provided system architecture, without making any assumptions or inventing details not mentioned. If a question asks about something not described in the architecture, I'll let you know that it's outside the scope of the information provided. \n\nPlease go ahead and ask your question, and I'll do my best to provide an accurate and clear explanation based on the architecture.",
+ *     "timestamp": "2026-07-05T16:52:28.187262",
+ *     "systemCapabilities": [
+ *         "Real-time Kafka Streams enrichment (Java)",
+ *         "XGBoost + SHAP ML inference (Python)",
+ *         "ChromaDB RAG historical case retrieval (Python)",
+ *         "10 LLM calls per transaction \u2014 5 parallel + 4 collaborative + 1 consensus",
+ *         "River SRPClassifier online learning (Python)",
+ *         "LangSmith full pipeline observability"
+ *     ]
+ * }
+ */
 @RestController
 @RequestMapping("/api/investigation")
 @CrossOrigin(origins = "*")
 public class ConversationalController {
 
-  private static final Logger logger = LoggerFactory.getLogger(ConversationalController.class);
+  private static final Logger logger =
+          LoggerFactory.getLogger(ConversationalController.class);
 
-//  private final ChatModel chatModel;
-//  private final AgentCoordinator agentCoordinator;
-//
-//  public ConversationalController(ChatModel chatModel, AgentCoordinator agentCoordinator) {
-//    this.chatModel = chatModel;
-//    this.agentCoordinator = agentCoordinator;
-//  }
+  private static final String PYTHON_BASE_URL = "http://localhost:8000";
 
-  /**
-   * Chat with the fraud detection system
-   *
-   * @param request Request
-   * @return Response
-   */
-  @PostMapping("/chat")
-  public ResponseEntity<Map<String, Object>> chatWithSystem(
-      @RequestBody Map<String, String> request) {
+  private final RestTemplate restTemplate;
+  private final ObjectMapper objectMapper;
 
-    String question = request.get("question");
-    String transactionId = request.get("transactionId"); // Optional
-
-    logger.info("New chat question: {}", question);
-
-    try {
-      String systemPrompt =
-          """
-                    You are an expert fraud investigation assistant with access to a multi-agent AI fraud detection system.
-
-                    Our system uses 5 specialized AI agents:
-                    - BehaviorAnalyst: Customer behavior patterns
-                    - PatternDetector: Known fraud patterns
-                    - RiskAssessor: Financial risk calculation
-                    - GeographicAnalyst: Location-based risks
-                    - TemporalAnalyst: Timing pattern analysis
-
-                    The agents work together, debate findings, and reach consensus through weighted voting.
-
-                    Use question: %s
-
-                    Provide helpful, detailed responses about fraud detection, our AI system capabilities, or general fraud
-                    prevention guidance. Be professional but accessible.
-
-                    If asked about specific transactions, explain that you'd need transaction details to provide specific analysis.
-                    """
-              .formatted(question);
-
-//      String response = chatModel.call(systemPrompt);
-
-      Map<String, Object> chatResponse =
-          Map.of(
-              "response", "null",
-              "timestamp", java.time.LocalDateTime.now(),
-              "systemCapabilities",
-                  List.of(
-                      "Multi-agent fraud analysis",
-                      "Explainable AI decision",
-                      "Real-time transaction processing",
-                      "Collaborative agent intelligence"));
-      return ResponseEntity.ok(chatResponse);
-    } catch (Exception e) {
-      logger.error("Error processing chat request: {}", e.getMessage());
-
-      Map<String, Object> chatResponse =
-          Map.of(
-              "response", "I'm sorry, I encountered a technical issue. Please try again.",
-              "error", "Technical error occurred",
-              "timestamp", java.time.LocalDateTime.now());
-
-      return ResponseEntity.status(500).body(chatResponse);
-    }
+  public ConversationalController() {
+    this.restTemplate = new RestTemplate();
+    this.objectMapper = new ObjectMapper();
   }
 
-  /**
-   * Provides an explanation for the fraud decision made by the system regarding the specified
-   * transaction.
-   *
-   * @param transactionId the unique identifier of the transaction whose decision needs to be
-   *     explained.
-   * @param context an optional map containing contextual details related to the transaction or user
-   *     interactions. This can include additional metadata or parameters to refine the explanation
-   *     process.
-   * @return a ResponseEntity containing a map with the explanation details. The map may include the
-   *     decision, reasoning, contributing factors, and any relevant metadata supporting the
-   *     explanation.
-   */
-  @PostMapping("/explain/{transactionId}")
-  public ResponseEntity<Map<String, Object>> explainDecision(
-      @PathVariable String transactionId,
-      @RequestBody(required = false) Map<String, Object> context) {
+  @PostMapping("/chat")
+  public ResponseEntity<Map> chatWithSystem(
+          @RequestBody Map<String, String> request) {
 
-    logger.info("Explaining decision for transaction: {}", transactionId);
+    String question = request.getOrDefault("question", "");
+    logger.info("Chat question: {} — delegating to Python", question);
 
     try {
+      String jsonBody = objectMapper.writeValueAsString(request);
 
-      String explanationPrompt =
-          """
-                    Explain this fraud detection decision in simple, conversational terms:
+      HttpHeaders headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setAccept(List.of(MediaType.APPLICATION_JSON));
 
-                    Transaction ID: %s
+      HttpEntity<String> entity = new HttpEntity<>(jsonBody, headers);
 
-                    Our 5 AI fraud investigators analyzed this transaction:
-                    - BehaviorAnalyst found behavioral patterns
-                    - PatternDetector checked for known fraud indicators
-                    - RiskAssessor calculated financial risk
-                    - GeographicAnalyst evaluated location factors
-                    - TemporalAnalyst examined timing patterns
+      ResponseEntity<Map> response = restTemplate.exchange(
+              PYTHON_BASE_URL + "/investigation/chat",
+              HttpMethod.POST,
+              entity,
+              Map.class
+      );
 
-                    Explain how these agents work together and what factors they consider.
-                    Make it sound like you're explaining a real investigation team's work.
-                    """
-              .formatted(transactionId);
+      return ResponseEntity.ok(response.getBody());
 
-//      String explanation = chatModel.call(explanationPrompt);
-
-      Map<String, Object> explanationResponse =
-          Map.of(
-              "transactionId",
-              transactionId,
-              "explanation",
-              "explanation",
-              "investigationProcess",
-              List.of(
-                  "Parallel agent analysis",
-                  "Agent collaboration and debate",
-                  "Consensus building",
-                  "Final decision synthesis"),
-              "timestamp",
-              java.time.LocalDateTime.now());
-
-      return ResponseEntity.ok(explanationResponse);
+    } catch (RestClientException e) {
+      logger.error("Chat request failed: {}", e.getMessage());
+      return ResponseEntity.status(503).body(Map.of(
+              "response", "Chat service temporarily unavailable.",
+              "error", e.getMessage(),
+              "timestamp", LocalDateTime.now().toString()));
     } catch (Exception e) {
-      logger.error(
-          "Error explaining decision for transaction {}: {}", transactionId, e.getMessage());
-
-      return ResponseEntity.status(500).body(Map.of("error", "Could not generate explanation"));
+      logger.error("Serialization error: {}", e.getMessage());
+      return ResponseEntity.status(500).build();
     }
   }
 }
