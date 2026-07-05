@@ -16,6 +16,8 @@ import joblib
 import json
 from agents.agent_coordinator import AgentCoordinator
 from dotenv import load_dotenv
+from utils.pipeline_utils import build_streaming_context, enriched_to_dict
+
 load_dotenv()
 import numpy as np
 import shap
@@ -200,14 +202,14 @@ class MLInferenceService:
             rag_context_text = self.rag_retriever.format_for_agent_prompt(similar_cases)
 
             # Step 4 — build streaming context string for agents
-            streaming_context = self._build_streaming_context(
+            streaming_context = build_streaming_context(
                 enriched=enriched,
                 fraud_score=fraud_score,
                 rag_context_text=rag_context_text,
             )
 
             # Step 5 — agent coordinator (10 LLM calls with full RAG context)
-            transaction_dict = self._enriched_to_dict(enriched, features)
+            transaction_dict = enriched_to_dict(enriched, features)
             fraud_decision = self.agent_coordinator.investigate(
                 transaction=transaction_dict,
                 streaming_context=streaming_context,
@@ -254,81 +256,6 @@ class MLInferenceService:
             logger.error("inference_failed",
                          transaction_id=enriched.transaction.transactionId,
                          error=str(e))
-
-    def _build_streaming_context(
-            self,
-            enriched: EnrichedTransaction,
-            fraud_score: float,
-            rag_context_text: str,
-    ) -> str:
-        """
-        Builds the streaming context string injected into every agent prompt.
-        Mirrors FraudStreams.java StreamingContext.getAIContext().
-        """
-        parts = []
-
-        if enriched.velocityCount and enriched.velocityCount >= 3:
-            parts.append(
-                f"HIGH VELOCITY: {enriched.velocityCount} transactions "
-                f"in the last 5 minutes"
-            )
-
-        if enriched.customerProfile:
-            profile: CustomerProfile = enriched.customerProfile
-            parts.append(
-                f"Customer baseline: ${profile.averageTransactionAmount:.2f} avg, "
-                f"{profile.riskLevel} risk."
-            )
-
-        fraud_pct = round(fraud_score * 100, 1)
-        if fraud_score >= 0.7:
-            parts.append(
-                f"ML MODEL PRE-SCREEN: XGBoost fraud score = {fraud_pct}%. "
-                f"ML strongly indicates fraud."
-            )
-        elif fraud_score >= 0.3:
-            parts.append(
-                f"ML MODEL PRE-SCREEN: XGBoost fraud score = {fraud_pct}%. "
-                f"ML indicates moderate risk."
-            )
-        else:
-            parts.append(
-                f"ML MODEL PRE-SCREEN: XGBoost fraud score = {fraud_pct}%. "
-                f"ML indicates likely legitimate."
-            )
-
-        if rag_context_text:
-            parts.append(rag_context_text)
-
-        return "\n".join(parts)
-
-    def _enriched_to_dict(
-            self,
-            enriched: EnrichedTransaction,
-            features: dict,
-    ) -> dict:
-        """
-        Converts EnrichedTransaction to the dict format AgentCoordinator expects.
-        Mirrors the Transaction.toAnalysisText() pattern from Java.
-        """
-        txn = enriched.transaction
-        profile = enriched.customerProfile or {}
-
-        return {
-            "transactionId": txn.transactionId,
-            "customerId": txn.customerId,
-            "amount": txn.amount,
-            "currency": getattr(txn, "currency", "USD"),
-            "merchantId": txn.merchantId,
-            "merchantCategory": getattr(txn, "merchantCategory", "UNKNOWN"),
-            "location": getattr(txn, "location", "Unknown"),
-            "metadata": getattr(txn, "metadata", {}),
-            "velocityCount": enriched.velocityCount or 0,
-            "hasHighVelocity": bool(features.get("is_high_velocity", 0)),
-            "isAmountUnusual": bool(features.get("is_amount_unusual", 0)),
-            "customerRiskLevel": profile.riskLevel if profile else "UNKNOWN",
-            "customerAvgAmount": profile.averageTransactionAmount if profile else 0,
-        }
 
     def _publish_decision(self, fraud_decision: dict, prediction: MLPrediction):
         """

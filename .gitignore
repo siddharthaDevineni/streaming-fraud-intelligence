@@ -71,3 +71,12 @@ python-ml/chroma_db/
 
 # MLflow local runs
 python-ml/mlruns/
+/python-ml/LICENSE.txt
+python-ml/pyvenv.cfg
+python-ml/bin
+python-ml/lib
+python-ml/include
+python-ml/LICENSE.txt
+python-ml/etc
+python-ml/lib64
+python-ml/share

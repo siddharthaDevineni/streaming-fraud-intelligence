@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     # Topics
     topic_enriched_transactions: str = "enriched-transactions"
     topic_ml_predictions: str = "ml-predictions"
+    topic_fraud_decisions: str = "fraud-decisions"
     topic_analyst_feedback: str = "analyst-feedback"
     topic_model_health: str = "model-health"
 

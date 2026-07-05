@@ -25,29 +25,4 @@ public record Transaction(
         @JsonDeserialize(using = LocalDateTimeDeserializer.class)
         LocalDateTime timestamp,
     Map<String, Object> metadata) {
-
-  // Helper methods for AI agent analysis
-  public String toAnalysisText() {
-    return String.format(
-        "Transaction: %s, Customer: %s, Amount: %s %s, Merchant: %s (%s), Location: %s, Time: %s",
-        transactionId,
-        customerId,
-        amount,
-        currency,
-        merchantId,
-        merchantCategory,
-        location,
-        timestamp);
-  }
-
-  public Map<String, Object> toFeatureMap() {
-    return Map.of(
-        "amount", amount,
-        "currency", currency,
-        "merchantCategory", merchantCategory,
-        "location", location,
-        "hour", timestamp.getHour(),
-        "dayOfWeek", timestamp.getDayOfWeek().getValue(),
-        "metadata", metadata != null ? metadata : Map.of());
-  }
 }
