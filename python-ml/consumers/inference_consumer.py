@@ -284,6 +284,7 @@ class MLInferenceService:
             transactionId=fraud_decision["transactionId"],
             isFraudulent=fraud_decision["isFraudulent"],
             confidenceScore=fraud_decision["confidenceScore"],
+            fraudPattern=fraud_decision.get("fraudPattern", "unknown"),
             primaryReason=(
                 "AI agents with streaming intelligence detected fraud"
                 if fraud_decision["isFraudulent"]
