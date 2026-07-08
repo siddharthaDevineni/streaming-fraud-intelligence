@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# sed -i 's/\r//' setup-topics.sh
+sed -i 's/\r//' setup-topics.sh
 
 echo "Setting up Kafka topics for Streaming-Intelligent Real-time AI agentic fraud detection..."
 
