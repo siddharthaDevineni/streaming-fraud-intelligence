@@ -1,4 +1,5 @@
 import polars as pl
+from config import settings
 from models.schemas import EnrichedTransaction
 import structlog
 
@@ -20,7 +21,7 @@ def extract_features(enriched: EnrichedTransaction) -> dict:
     daily_limit_ratio = txn.amount / daily_limit if daily_limit > 0 else 0.0
     is_amount_unusual = 1 if txn.amount > (avg_amount * 3) else 0
 
-    is_high_velocity = 1 if velocity > 3 else 0
+    is_high_velocity = 1 if velocity >= settings.high_velocity_threshold else 0
     velocity_squared = velocity ** 2
 
     is_unknown_location = 1 if "unknown" in txn.location.lower() else 0
@@ -32,7 +33,7 @@ def extract_features(enriched: EnrichedTransaction) -> dict:
     is_suspicious_merchant = 1 if "suspicious" in txn.merchantId.lower() else 0
 
     hour = txn.timestamp.hour
-    is_off_hours = 1 if (hour < 6 or hour > 23) else 0
+    is_off_hours = 1 if (hour < 6 or hour >= 22) else 0
     is_weekend = 1 if txn.timestamp.weekday() >= 5 else 0
 
     is_high_risk_customer = 1 if risk_level == "HIGH" else 0
