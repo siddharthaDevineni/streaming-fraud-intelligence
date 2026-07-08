@@ -12,7 +12,8 @@ public record FraudDecision(
     String detailedExplanation,
     List<AgentInsight> agentInsights,
     Map<String, Object> riskFactors,
-    LocalDateTime analyzedAt) {
+    LocalDateTime analyzedAt,
+    String fraudPattern) {
 
   public static FraudDecision fraudulent(
       String transactionId,
@@ -28,7 +29,8 @@ public record FraudDecision(
         explanation,
         insights,
         Map.of(),
-        LocalDateTime.now());
+        LocalDateTime.now(),
+        "unknown");
   }
 
   public static FraudDecision legitimate(
@@ -41,7 +43,8 @@ public record FraudDecision(
         "All agents agree this translation follows normal patterns",
         insights,
         Map.of(),
-        LocalDateTime.now());
+        LocalDateTime.now(),
+        "legitimate");
   }
 
   public boolean isHighConfidence() {
