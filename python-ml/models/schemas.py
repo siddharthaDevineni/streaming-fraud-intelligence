@@ -77,3 +77,4 @@ class FraudDecisionOutput(BaseModel):
     agentInsights: list[AgentInsightOutput]
     riskFactors: dict = {}
     analyzedAt: str  # ISO format string — Java LocalDateTime parses this
+    fraudPattern: str = "unknown"
