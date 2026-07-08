@@ -30,7 +30,7 @@ class GeographicAnalyst(BaseFraudAgent):
             2. Does Unknown Location suggest VPN or proxy usage?
             3. Is geographic travel between transactions physically impossible?
             4. Does location pattern match known fraud hotspots?
-            {self._response_format()}"""
+            {self._build_rag_block(streaming_context)}{self._response_format()}"""
 
     def _build_collaboration_prompt(self, transaction: dict, question: str) -> str:
         return f"""You are a geographic fraud analyst. A colleague asks:
@@ -42,3 +42,12 @@ class GeographicAnalyst(BaseFraudAgent):
             
             Answer focusing on location anomalies and VPN/proxy indicators.
             {self._response_format()}"""
+
+    def _rag_instruction(self) -> str:
+        return (
+            "As a GEOGRAPHIC ANALYST: if similar confirmed cases show the same "
+            "unknown/vpn location pattern, this is confirmed fraudulent "
+            "geographic behaviour — weight heavily in your RISK_SCORE. "
+            "Repeated unknown location + VPN across confirmed cases is a "
+            "definitive fraud indicator."
+        )

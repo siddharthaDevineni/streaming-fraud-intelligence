@@ -16,13 +16,22 @@ class BehaviorAnalyst(BaseFraudAgent):
     def weight(self) -> float:
         return 1.2
 
+    def _rag_instruction(self) -> str:
+        return (
+            "As a BEHAVIOR ANALYST: if similar confirmed cases show the same "
+            "velocity + spending deviation pattern, weight this heavily in your "
+            "RISK_SCORE. Confirmed historical cases with matching behavioral "
+            "signatures are strong evidence of the same attack type."
+        )
+
     def _build_analysis_prompt(
             self,
             transaction: dict,
             streaming_context: str,
     ) -> str:
-        return f"""You are a fraud detection specialist analyzing customer behavioral patterns.
-                
+        return f"""You are a fraud detection specialist analyzing customer 
+            behavioral patterns.
+            
             STREAMING INTELLIGENCE:
             {streaming_context}
             
@@ -34,7 +43,7 @@ class BehaviorAnalyst(BaseFraudAgent):
             2. Does velocity pattern match normal customer behavior?
             3. Are merchant category and channel consistent with history?
             4. Do timing patterns suggest automated behavior?
-            {self._response_format()}"""
+            {self._build_rag_block(streaming_context)}{self._response_format()}"""
 
     def _build_collaboration_prompt(
             self,

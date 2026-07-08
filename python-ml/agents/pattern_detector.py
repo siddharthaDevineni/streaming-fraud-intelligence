@@ -16,6 +16,15 @@ class PatternDetector(BaseFraudAgent):
     def weight(self) -> float:
         return 1.3
 
+    def _rag_instruction(self) -> str:
+        return (
+            "As a PATTERN DETECTOR: if similar confirmed cases match the same "
+            "attack signature (card_testing, vpn_bot_fraud, account_takeover), "
+            "this is direct confirmation of a known pattern — significantly "
+            "increase your RISK_SCORE. Pattern match to confirmed fraud is "
+            "the strongest signal available."
+        )
+
     def _build_analysis_prompt(self, transaction: dict, streaming_context: str) -> str:
         return f"""You are a fraud pattern detection specialist identifying known attack signatures.
 
@@ -30,7 +39,7 @@ class PatternDetector(BaseFraudAgent):
             2. Does merchant + location combination match known fraud vectors?
             3. Is the device ID consistent with bot/automated attack patterns?
             4. Does rapid-fire flag combined with small amounts indicate card probing?
-            {self._response_format()}"""
+            {self._build_rag_block(streaming_context)}{self._response_format()}"""
 
     def _build_collaboration_prompt(self, transaction: dict, question: str) -> str:
         return f"""You are a fraud pattern detection specialist. A colleague asks:

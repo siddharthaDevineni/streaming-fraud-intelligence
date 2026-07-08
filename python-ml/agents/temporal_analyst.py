@@ -16,6 +16,15 @@ class TemporalAnalyst(BaseFraudAgent):
     def weight(self) -> float:
         return 1.0
 
+    def _rag_instruction(self) -> str:
+        return (
+            "As a TEMPORAL ANALYST: if similar confirmed cases show the same "
+            "rapid-fire bot timing pattern (sub-second intervals, rapidFire=true), "
+            "this is confirmed automated attack behaviour — significantly increase "
+            "your RISK_SCORE. Bot timing patterns in confirmed cases are "
+            "definitive evidence of scripted attacks."
+        )
+
     def _build_analysis_prompt(self, transaction: dict, streaming_context: str) -> str:
         return f"""You are a temporal fraud analyst specializing in timing patterns and automated attack detection.
 
@@ -30,7 +39,7 @@ class TemporalAnalyst(BaseFraudAgent):
             2. Does transaction hour match customer's typical activity window?
             3. Does the rapid-fire flag combined with velocity indicate scripted attack?
             4. Is the timing pattern consistent with human or automated behavior?
-            {self._response_format()}"""
+            {self._build_rag_block(streaming_context)}{self._response_format()}"""
 
     def _build_collaboration_prompt(self, transaction: dict, question: str) -> str:
         return f"""You are a temporal fraud analyst. A colleague asks:

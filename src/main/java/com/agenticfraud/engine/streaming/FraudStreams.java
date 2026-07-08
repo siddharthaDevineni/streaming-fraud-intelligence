@@ -4,7 +4,6 @@ import com.agenticfraud.engine.models.*;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import lombok.RequiredArgsConstructor;
@@ -286,7 +285,7 @@ public class FraudStreams {
 
     // Optimized for AI workloads
     props.put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE_V2);
-    props.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 1000);
+    props.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 100);
     props.put(StreamsConfig.CACHE_MAX_BYTES_BUFFERING_CONFIG, 10 * 1024 * 1024); // 10MB
 
     return props;
@@ -298,6 +297,7 @@ public class FraudStreams {
         "type", "AI_FRAUD_ALERT",
         "transactionId", decision.transactionId(),
         "confidence", Math.round(decision.confidenceScore() * 100),
+        "fraudPattern", decision.fraudPattern(),
         "reason", decision.primaryReason(),
         "agentCount", decision.agentInsights().size(),
         "aiExplanation", decision.detailedExplanation(),
@@ -310,6 +310,7 @@ public class FraudStreams {
         "type", "AI_REVIEW_CASE",
         "transactionId", decision.transactionId(),
         "confidence", Math.round(decision.confidenceScore() * 100),
+        "fraudPattern", decision.fraudPattern(),
         "explanation", decision.detailedExplanation(),
         "agentInsights", decision.agentInsights(),
         "status", "PENDING_HUMAN_REVIEW",
@@ -343,6 +344,7 @@ public class FraudStreams {
         decision.isFraudulent(),
         "confidence",
         decision.confidenceScore(),
+        "fraudPattern", decision.fraudPattern(),
         "agentConsensus",
         decision.agentInsights().size(),
         "timestamp",

@@ -5,15 +5,13 @@ import structlog
 from langchain_groq import ChatGroq
 from langsmith import traceable
 
-from agents.base_agent import AgentInsight, BaseFraudAgent
+from agents.base_agent import AgentInsight, BaseFraudAgent, parse_llm_response
 from agents.behavior_analyst import BehaviorAnalyst
 from agents.geographic_analyst import GeographicAnalyst
 from agents.pattern_detector import PatternDetector
 from agents.risk_assessor import RiskAssessor
 from agents.temporal_analyst import TemporalAnalyst
 from config import settings
-from sympy.physics.units import velocity
-from torch import futures
 
 logger = structlog.get_logger()
 
@@ -233,39 +231,43 @@ class AgentCoordinator:
         
         Based on streaming intelligence, RAG historical context, and agent analyses,
         provide final consensus:
-        - How does streaming context enhance the decision?
-        - What is the overall fraud risk with all intelligence combined?
-        - Key factors from AI analysis, streaming data, and historical cases?
+        - If SIMILAR CONFIRMED FRAUD CASES appear above, how closely do they 
+          match this transaction? High similarity (>70%) to confirmed fraud is 
+          the strongest evidence available — your RISK_SCORE should be higher 
+          when confirmed similar cases exist than when no historical context 
+          is available.
+        - How does streaming velocity and customer profile context affect risk?
+        - What is the combined weight of all agent findings?
+        - Your RISK_SCORE should reflect ALL available evidence: agent analyses,
+          streaming context, AND historical case similarity.
         
-        You MUST respond in exactly this format with no preamble:
+        You MUST respond in EXACTLY this format. Each field on its OWN LINE. No exceptions:
         RISK_SCORE: [number between 0.0 and 1.0]
         REASONING: [your analysis in one paragraph]
-        RECOMMENDATION: [FRAUD_ALERT or HUMAN_REVIEW or APPROVE]"""
+        RECOMMENDATION: [FRAUD_ALERT or HUMAN_REVIEW or APPROVE]
+        PATTERN: [card_testing or vpn_bot_fraud or account_takeover or general_fraud]
+        
+        Rules:
+        - Each of the 4 fields above MUST be on a separate line starting with the field name
+        - PATTERN must be the LAST line
+        - For PATTERN, reason from current transaction features: high velocity (3+ txns) 
+          + bot device + rapid fire = card_testing, regardless of historical case labels"""
 
         response = self.llm.invoke(prompt)
-        content = response.content
-        import re
-
-        risk_match = re.search(r"RISK_SCORE:\s*([0-9.]+)", content, re.IGNORECASE)
-        reasoning_match = re.search(
-            r"REASONING:\s*(.+?)(?=RECOMMENDATION:|$)", content,
-            re.IGNORECASE | re.DOTALL
+        insight = parse_llm_response(
+            response.content,
+            agent_name="STREAMING_CONSENSUS_COORDINATOR",
+            weight=0.8,
         )
-        recommendation_match = re.search(
-            r"RECOMMENDATION:\s*(.+?)$", content,
-            re.IGNORECASE | re.DOTALL
-        )
-
-        risk_score = float(risk_match.group(1).strip()) if risk_match else 0.5
-        risk_score = min(1.0, max(0.0, risk_score))
 
         return AgentInsight(
             agent_name="STREAMING_CONSENSUS_COORDINATOR",
-            risk_score=risk_score,
-            confidence=risk_score,
-            reasoning=reasoning_match.group(1).strip() if reasoning_match else "",
-            recommendation=recommendation_match.group(1).strip() if recommendation_match else "",
+            risk_score=insight.risk_score,
+            confidence=insight.risk_score,
+            reasoning=insight.reasoning,
+            recommendation=insight.recommendation,
             weight=0.8,
+            pattern=insight.pattern
         )
 
     # ─── Phase 3 ──────────────────────────────────────────────────────────────
@@ -285,7 +287,28 @@ class AgentCoordinator:
         final_risk = min(1.0, base_risk + streaming_bonus)
 
         is_fraudulent = final_risk >= self.FRAUD_THRESHOLD
-        confidence = self._calculate_confidence(all_insights, is_fraudulent)
+
+        # Use the consensus orchestrator's risk score as confidence —
+        # it is the LLM's own assessment of overall certainty after
+        # reading all agent insights + RAG context + streaming intelligence.
+        # This is what the LLM decided.
+        consensus_insight = next(
+            (i for i in all_insights
+             if i.agent_name == "STREAMING_CONSENSUS_COORDINATOR"),
+            None
+        )
+        if consensus_insight:
+            confidence = round(consensus_insight.risk_score, 3)
+            fraud_pattern = consensus_insight.pattern  # ← LLM-decided pattern
+            logger.info(
+                "consensus_pattern_extracted",
+                pattern=fraud_pattern,
+                confidence=confidence,
+                transaction_id=transaction.get("transactionId"),)
+        else:
+            # Fallback only if consensus somehow missing
+            confidence = self._calculate_confidence(all_insights, is_fraudulent)
+            fraud_pattern = "unknown"
 
         logger.info(
             "decision_synthesized",
@@ -301,6 +324,7 @@ class AgentCoordinator:
             "transactionId": transaction.get("transactionId"),
             "isFraudulent": is_fraudulent,
             "confidenceScore": confidence,
+            "fraudPattern": fraud_pattern,
             "finalRiskScore": final_risk,
             "agentCount": len(all_insights),
             "explanation": self._build_explanation(

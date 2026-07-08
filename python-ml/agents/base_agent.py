@@ -1,17 +1,13 @@
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+import structlog
+from config import settings
 from langchain_core.messages import AIMessage
 from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langsmith import traceable
-from config import settings
-import re
-import structlog
-from sympy.physics.units import temperature
 
 logger = structlog.get_logger()
-
 
 @dataclass
 class AgentInsight:
@@ -21,9 +17,43 @@ class AgentInsight:
     reasoning: str
     recommendation: str
     weight: float = 1.0
+    pattern: str = "unknown"
 
     def indicates_fraud(self) -> bool:
         return self.risk_score >= 0.6
+
+def parse_llm_response(text: str, agent_name: str = "unknown", weight: float = 1.0) -> AgentInsight:
+    """
+    Shared response parser used by both BaseFraudAgent and AgentCoordinator.
+    Extracts RISK_SCORE, REASONING, RECOMMENDATION, PATTERN from LLM output.
+    """
+    import re
+
+    def extract_float(t, pattern):
+        m = re.search(pattern, t, re.IGNORECASE)
+        return float(m.group(1).strip()) if m else 0.5
+
+    def extract_text(t, pattern):
+        m = re.search(pattern, t, re.IGNORECASE | re.DOTALL | re.MULTILINE)
+        return m.group(1).strip() if m else ""
+
+    risk_score = extract_float(text, r"RISK_SCORE:\s*([0-9.]+)")
+    risk_score = min(1.0, max(0.0, risk_score))
+    reasoning = extract_text(text, r"REASONING:\s*(.+?)(?=\nRECOMMENDATION:|RECOMMENDATION:|PATTERN:|$)")
+    recommendation = extract_text(text, r"RECOMMENDATION:\s*([^\r\n]+)")
+    pattern = extract_text(text,
+                           r"PATTERN:\s*(card_testing|vpn_bot_fraud|account_takeover|general_fraud)"
+                           )
+
+    return AgentInsight(
+        agent_name=agent_name,
+        risk_score=risk_score,
+        confidence=risk_score,
+        reasoning=reasoning,
+        recommendation=recommendation,
+        weight=weight,
+        pattern=pattern if pattern else "unknown",
+    )
 
 
 class BaseFraudAgent(ABC):
@@ -54,6 +84,30 @@ class BaseFraudAgent(ABC):
     ) -> str:
         pass
 
+    # each agent overrides with its own RAG weighting instruction
+    def _rag_instruction(self) -> str:
+        """
+        Per-agent instruction for reasoning about RAG historical context.
+        Mirrors Java's per-agent RAG weighting in buildStreamingAnalysisPrompt().
+        Only injected into the prompt when confirmed cases are available.
+        Override in each concrete agent class.
+        """
+        return (
+            "If similar confirmed fraud cases are shown above, weight them "
+            "heavily in your RISK_SCORE — they are validated historical evidence."
+        )
+
+    def _build_rag_block(self, streaming_context: str) -> str:
+        """
+        Returns the agent-specific RAG instruction only when confirmed
+        historical cases are actually present in the streaming context.
+        Returns empty string when no cases are available — avoids confusing
+        the agent with an instruction about cases that do not exist.
+        """
+        if "SIMILAR CONFIRMED FRAUD CASES FROM HISTORY" in streaming_context:
+            return f"\n{self._rag_instruction()}\n"
+        return ""
+
     @abstractmethod
     def _build_collaboration_prompt(
             self,
@@ -69,7 +123,7 @@ class BaseFraudAgent(ABC):
         insight = self._parse_response(response.content)
         logger.info(f"{self.agent_name}_completed", risk=round(insight.risk_score, 2),
                     confidence=round(insight.confidence, 2),
-                    transaction_id=transaction.get("transactionId"),)
+                    transaction_id=transaction.get("transactionId"), )
         return insight
 
     def collaborate(self, transaction: dict, question: str) -> AgentInsight:
@@ -79,22 +133,8 @@ class BaseFraudAgent(ABC):
         return self._parse_response(response.content)
 
     def _parse_response(self, response: str) -> AgentInsight:
-        """
-        Extract RISK_SCORE, REASONING, RECOMMENDATION from LLM response.
-        Mirrors AgenticFraudUtils.java regex parsing — kept simple intentionally.
-        """
-        risk_score = self._extract_float(response, r"RISK_SCORE:\s*([0-9.]+)")
-        reasoning = self._extract_text(response, r"REASONING:\s*(.+?)(?=RECOMMENDATION:|$)")
-        recommendation = self._extract_text(response, r"RECOMMENDATION:\s*(.+?)$")
-
-        return AgentInsight(
-            agent_name=self.agent_name,
-            risk_score=min(1.0, max(0.0, risk_score)),
-            confidence=min(1.0, max(0.0, risk_score)),
-            reasoning=reasoning,
-            recommendation=recommendation,
-            weight=self.weight,
-        )
+        insight = parse_llm_response(response, self.agent_name, self.weight)
+        return insight
 
     def _extract_float(self, text: str, pattern: str) -> float:
         match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
@@ -106,7 +146,7 @@ class BaseFraudAgent(ABC):
         return 0.5  # safe default
 
     def _extract_text(self, text: str, pattern: str) -> str:
-        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL | re.MULTILINE)
         return match.group(1).strip() if match else ""
 
     def _format_transaction(self, transaction: dict) -> str:

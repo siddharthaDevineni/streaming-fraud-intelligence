@@ -1,3 +1,4 @@
+from agents.base_agent import AgentInsight
 from config import settings
 from models.schemas import EnrichedTransaction, CustomerProfile
 
