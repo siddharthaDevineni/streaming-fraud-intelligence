@@ -102,32 +102,6 @@ class FeedbackEmbedder:
         )
         return collection
 
-    # ── Fraud pattern detection ───────────────────────────────────────────────
-
-    def _detect_fraud_pattern(self, features: dict) -> str:
-        """
-        Classify the fraud type from feature values.
-        Used as metadata and in the embedded text for better retrieval.
-        """
-        is_rapid_fire = features.get("is_rapid_fire", 0)
-        is_bot_device = features.get("is_bot_device", 0)
-        is_high_velocity = features.get("is_high_velocity", 0)
-        is_unknown_location = features.get("is_unknown_location", 0)
-        is_amount_unusual = features.get("is_amount_unusual", 0)
-        velocity = features.get("velocity_count", 1)
-
-        if is_rapid_fire and is_bot_device and velocity > 5:
-            return "card_testing"
-        if is_high_velocity and is_unknown_location:
-            return "account_takeover"
-        if is_amount_unusual and not is_high_velocity:
-            return "unusual_amount_fraud"
-        if is_unknown_location and is_bot_device:
-            return "vpn_bot_fraud"
-        if is_high_velocity:
-            return "velocity_attack"
-        return "general_fraud"
-
     # ── Text building ─────────────────────────────────────────────────────────
 
     def _build_fraud_case_text(
@@ -135,6 +109,7 @@ class FeedbackEmbedder:
             features: dict,
             feedback: dict,
             ml_score: float,
+            pattern: str
     ) -> str:
         """
         Build structured text representation of a confirmed fraud case.
@@ -161,8 +136,6 @@ class FeedbackEmbedder:
         is_low_risk = features.get("is_low_risk_customer", 0)
         is_amount_unusual = features.get("is_amount_unusual", 0)
         hour = features.get("hour", 12)
-
-        pattern = self._detect_fraud_pattern(features)
 
         customer_risk = (
             "HIGH" if is_high_risk
@@ -208,17 +181,21 @@ class FeedbackEmbedder:
             features: dict,
             feedback: dict,
             ml_score: float,
-    ):
+            fraud_pattern: str = "unknown"
+    ) -> None:
         """
         Embed the fraud case text and store in ChromaDB.
 
         Metadata stored alongside the vector:
-        - Used for filtering at retrieval time (e.g. by customerId, pattern)
+        - fraudPattern: LLM-assessed pattern type (card_testing, vpn_bot_fraud etc.)
+        - customerId:   for customer-specific retrieval priority
+        - isHighVelocity: kept for informational purposes (no longer used as filter)
+        - confidence:   agent consensus confidence at time of confirmation
         - Shown to agents as context alongside the retrieved text
         - Not used for similarity matching (that uses the vector only)
         """
-        fraud_case_text = self._build_fraud_case_text(features, feedback, ml_score)
-        pattern = self._detect_fraud_pattern(features)
+        pattern = fraud_pattern
+        fraud_case_text = self._build_fraud_case_text(features, feedback, ml_score, pattern)
 
         # Check if already embedded (idempotent — safe to run multiple times)
         existing = self.collection.get(ids=[transaction_id])
@@ -326,6 +303,13 @@ class FeedbackEmbedder:
 
     def _process_ml_prediction(self, raw: dict):
         """Cache ML prediction for later join with feedback."""
+        txn_id = raw.get("transactionId")
+        features = raw.get("featuresUsed", {})
+        logger.info("ml_prediction_cached",
+                    transaction_id=txn_id,
+                    features_count=len(features),
+                    ml_score=raw.get("mlFraudScore"))
+    
         self._cache_prediction(raw)
         txn_id = raw.get("transactionId")
 
@@ -341,6 +325,14 @@ class FeedbackEmbedder:
     def _process_feedback(self, raw: dict):
         """Process analyst feedback — embed if high confidence fraud."""
         txn_id = raw.get("transactionId")
+
+        logger.info("feedback_received",
+                    transaction_id=txn_id,
+                    predicted_fraud=raw.get("predictedFraud"),
+                    confidence=raw.get("confidence"),
+                    should_embed=self._should_embed(raw),
+                    in_cache=txn_id in self.prediction_cache)
+
         if not txn_id:
             return
 
@@ -366,12 +358,31 @@ class FeedbackEmbedder:
             self.pending_feedback[txn_id] = raw    # ← store, don't discard
             return
 
+        features = cached["features"]
+        ml_score = cached["mlFraudScore"]
+        velocity = features.get("velocity_count", 0)
+        fraud_pattern = raw.get("fraudPattern", "unknown")
+
+        # Skip embedding low-quality cold-start cases — transactions with
+        # velocity=1 and near-zero ML score are timing lag artifacts, not
+        # representative fraud patterns. They would poison ChromaDB with
+        # vpn_bot_fraud cases that match every subsequent transaction.
+        if velocity <= 1 and ml_score < 0.01:
+            logger.debug(
+                "embedding_skipped_cold_start_artifact",
+                transaction_id=txn_id,
+                velocity=velocity,
+                ml_score=ml_score,
+            )
+            return
+
         self._embed_and_store(
             transaction_id=txn_id,
             customer_id=cached["customerId"],
-            features=cached["features"],
+            features=features,
             feedback=raw,
-            ml_score=cached["mlFraudScore"],
+            ml_score=ml_score,
+            fraud_pattern=fraud_pattern
         )
 
     # ── Main loop ─────────────────────────────────────────────────────────────

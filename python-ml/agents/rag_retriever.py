@@ -11,9 +11,9 @@ Flow:
       → embed with sentence-transformers
       → ChromaDB cosine similarity search
       → return top N similar confirmed cases
-      → injected into MLPrediction.ragContext field
-      → Java reads ragContext from ml-predictions topic
-      → injected into each agent's buildStreamingAnalysisPrompt()
+      → injected into streaming_context string in inference_consumer.py
+      → passed directly to Python AgentCoordinator
+      → injected into every agent prompt at analysis time (no KTable lag)
 """
 
 import time
@@ -162,53 +162,25 @@ class RAGRetriever:
 
         query_embedding = self.embedding_model.encode(query_text).tolist()
 
-        # Velocity-based metadata filter — ensures high-velocity queries only
-        # retrieve high-velocity confirmed cases, preventing vpn_bot_fraud
-        # (velocity=1) from dominating results for card_testing (velocity=15)
-        # scenarios where the two patterns share 16 of 19 features
-        is_high_velocity = bool(features.get("is_high_velocity", 0))
-        velocity_filter = (
-            {"isHighVelocity": {"$eq": 1}} if is_high_velocity
-            else {"isHighVelocity": {"$eq": 0}}
-        )
-
         if customer_id:
-            # Try customer-specific first — if CUST-001 was flagged before,
-            # that history is directly relevant
+            # Customer-specific history first — directly relevant precedent
             customer_results = self._query_chromadb(
                 query_embedding=query_embedding,
                 n_results=min(2, n_results),
-                where={
-                    "$and": [
-                        {"customerId": {"$eq": customer_id}},
-                        {"isHighVelocity": {"$eq": int(is_high_velocity)}},
-                    ]
-                }
+                where={"customerId": {"$eq": customer_id}},
             )
         else:
             customer_results = []
 
-        # General cases — velocity-filtered to prevent pattern bleed
+        # General similarity search — no velocity filter.
+        # With sufficient confirmed cases, cosine similarity naturally
+        # retrieves the most relevant pattern.
         general_n = n_results - len(customer_results)
         general_results = self._query_chromadb(
             query_embedding=query_embedding,
-            n_results=general_n + 2,  # fetch extra, deduplicate below
-            where=velocity_filter,
+            n_results=general_n + 2,
+            where=None,
         )
-
-        # If velocity filter returned nothing (cold start — no cases with matching
-        # isHighVelocity flag yet), fall back to unfiltered to avoid returning 0 cases
-        if not customer_results and not general_results:
-            logger.debug(
-                "velocity_filter_empty_falling_back_to_unfiltered",
-                is_high_velocity=is_high_velocity,
-                collection_count=self.collection.count(),
-            )
-            general_results = self._query_chromadb(
-                query_embedding=query_embedding,
-                n_results=n_results + 2,
-                where=None,
-            )
 
         # Merge: customer-specific cases first, then general cases
         # Deduplicate by transactionId
@@ -347,8 +319,7 @@ class RAGRetriever:
     def format_for_ml_prediction(self, similar_cases: list[dict]) -> dict:
         """
         Format retrieved cases as a dict for the MLPrediction.ragContext field.
-        This is serialized to JSON and sent via ml-predictions topic to Java.
-        Java reads it from StreamingContext and injects into agent prompts.
+        This is serialized to JSON and sent via ml-predictions topic to the dashboard and feedback embedder.
         """
         if not similar_cases:
             return {
