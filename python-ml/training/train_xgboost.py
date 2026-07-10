@@ -14,13 +14,13 @@ Output:
 """
 
 import os
+
 import joblib
 import mlflow
 import mlflow.xgboost
 import numpy as np
+import structlog
 import xgboost as xgb
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     roc_auc_score,
     precision_score,
@@ -28,17 +28,18 @@ from sklearn.metrics import (
     f1_score,
     classification_report
 )
-import structlog
-
-import features
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 
 logger = structlog.get_logger()
 
 # Feature columns - must match FEATURE_COLUMNS in features/engineer.py exactly
 FEATURE_COLUMNS = [
     "amount_ratio", "daily_limit_ratio", "is_amount_unusual", "velocity_count", "velocity_squared", "is_high_velocity",
-    "is_unkown_location", "is_primary_location", "is_different_city", "is_online", "is_typical_category", "is_suspicious_merchant",
-    "hour", "is_off_hours", "is_weekend", "is_high_risk_customer", "is_low_risk_customer", "is_bot_device", "is_rapid_fire"
+    "is_unkown_location", "is_primary_location", "is_different_city", "is_online", "is_typical_category",
+    "is_suspicious_merchant",
+    "hour", "is_off_hours", "is_weekend", "is_high_risk_customer", "is_low_risk_customer", "is_bot_device",
+    "is_rapid_fire"
 ]
 
 def generate_synthetic_data(n_samples: int = 10000) -> tuple:
@@ -60,7 +61,7 @@ def generate_synthetic_data(n_samples: int = 10000) -> tuple:
     n_velocity = int(n_samples * 0.1)
     n_unusual = int(n_samples * 0.1)
 
-    #-------Normal transactions (legitimate)-------
+    # -------Normal transactions (legitimate)-------
     for _ in range(n_normal):
         features = {
             "amount_ratio": np.random.uniform(0.3, 1.8),
@@ -73,7 +74,7 @@ def generate_synthetic_data(n_samples: int = 10000) -> tuple:
             "is_primary_location": np.random.choice([0, 1], p=[0.2, 0.8]),  # 20% chance isn't primary
             "is_different_city": np.random.choice([0, 1], p=[0.9, 0.1]),
             "is_online": np.random.randint(0, 2),
-            "is_typical_category":np.random.choice([0, 1], p=[0.15, 0.85]),  # 15% chance unusual,
+            "is_typical_category": np.random.choice([0, 1], p=[0.15, 0.85]),  # 15% chance unusual,
             "is_suspicious_merchant": np.random.choice([0, 1], p=[0.95, 0.05]),
             "hour": np.random.randint(8, 22),
             "is_off_hours": 0,
@@ -84,15 +85,15 @@ def generate_synthetic_data(n_samples: int = 10000) -> tuple:
             "is_rapid_fire": np.random.choice([0, 1], p=[0.97, 0.03]),
         }
         X.append([features[col] for col in FEATURE_COLUMNS])
-        y.append(0) # legitimate
+        y.append(0)  # legitimate
 
     # -------High-velocity attack (card testing)-------
     for _ in range(n_velocity):
         velocity = np.random.randint(5, 15)
         features = {
-            "amount_ratio": np.random.uniform(0.05, 0.3), # smaller amounts
+            "amount_ratio": np.random.uniform(0.05, 0.3),  # smaller amounts
             "daily_limit_ratio": np.random.uniform(0.01, 0.1),
-            "is_amount_unusual":  np.random.choice([0, 1], p=[0.4, 0.6]),
+            "is_amount_unusual": np.random.choice([0, 1], p=[0.4, 0.6]),
             "velocity_count": velocity,
             "velocity_squared": velocity ** 2,
             "is_high_velocity": 1,
@@ -111,7 +112,7 @@ def generate_synthetic_data(n_samples: int = 10000) -> tuple:
             "is_rapid_fire": np.random.choice([0, 1], p=[0.15, 0.85]),
         }
         X.append([features[col] for col in FEATURE_COLUMNS])
-        y.append(1) # fraud - card testing
+        y.append(1)  # fraud - card testing
 
     # ---------Unusual amount fraud -----------
     for _ in range(n_unusual):
@@ -137,9 +138,10 @@ def generate_synthetic_data(n_samples: int = 10000) -> tuple:
             "is_rapid_fire": np.random.choice([0, 1], p=[0.7, 0.3]),
         }
         X.append([features[col] for col in FEATURE_COLUMNS])
-        y.append(1) # fraud
+        y.append(1)  # fraud
 
     return np.array(X), np.array(y)
+
 
 def train():
     os.makedirs("models", exist_ok=True)
@@ -156,7 +158,8 @@ def train():
     x_train_scaled = scaler.fit_transform(x_train)
     x_test_scaled = scaler.transform(x_test)
 
-    logger.info("Training XGBoost model", training_samples=len(x_train), test_samples=len(x_test), fraud_rate=f"{y.mean():.1%}")
+    logger.info("Training XGBoost model", training_samples=len(x_train), test_samples=len(x_test),
+                fraud_rate=f"{y.mean():.1%}")
 
     with mlflow.start_run(run_name="xgb-v1"):
         params = {
