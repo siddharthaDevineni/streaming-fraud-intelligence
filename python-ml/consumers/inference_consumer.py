@@ -12,8 +12,9 @@ Every enriched transaction gets:
   4. Published to ml-predictions topic
 """
 
-import joblib
 import json
+
+import joblib
 from agents.agent_coordinator import AgentCoordinator
 from dotenv import load_dotenv
 from utils.pipeline_utils import build_streaming_context, enriched_to_dict
@@ -29,7 +30,7 @@ from config import settings
 from confluent_kafka import Consumer, Producer, KafkaError
 from datetime import datetime, timezone
 from features.engineer import extract_features, FEATURE_COLUMNS
-from models.schemas import EnrichedTransaction, MLPrediction, CustomerProfile, AgentInsightOutput, FraudDecisionOutput
+from models.schemas import EnrichedTransaction, MLPrediction, AgentInsightOutput, FraudDecisionOutput
 from pydantic import ValidationError
 
 logger = structlog.get_logger()
