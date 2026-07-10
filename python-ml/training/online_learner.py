@@ -11,14 +11,12 @@ that label updates the model in real-time.
 """
 
 import json
+
 import joblib
-import numpy as np
-from datetime import datetime, timezone
+import structlog
+from config import settings
 from confluent_kafka import Consumer, KafkaError
 from river import ensemble, metrics
-from features.engineer import FEATURE_COLUMNS
-from config import settings
-import structlog
 
 logger = structlog.get_logger()
 
