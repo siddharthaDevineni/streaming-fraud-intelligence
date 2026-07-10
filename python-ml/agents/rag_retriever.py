@@ -21,17 +21,25 @@ import time
 import chromadb
 import structlog
 from config import settings
-from langsmith import traceable
 from sentence_transformers import SentenceTransformer
 
 logger = structlog.get_logger()
 
 # How many similar cases to retrieve per transaction
-DEFAULT_N_RESULTS = 3
+# Set to 5 to ensure enough candidates after deduplication —
+# if all cases belong to CUST-001, then customer-specific
+# and general queries overlap; fetching 5 ensures 3 useful cases
+# survive similarity filtering
+DEFAULT_N_RESULTS = 5
 
-# Minimum similarity score to include a case (cosine similarity: 0=unrelated, 1=identical)
-# Cases below this threshold are not useful context for agents
-MIN_SIMILARITY_SCORE = 0.50
+# Minimum cosine similarity to include a case as agent context
+# 0.40 is appropriate for all-MiniLM-L6-v2 (384-dim) where:
+# - Same fraud pattern, different velocity: ~0.75-0.85 similarity
+# - Different fraud pattern, same customer: ~0.50-0.65 similarity
+# - Unrelated transactions: <0.40 similarity
+# In practice with numpy re-embedding, all card_testing cases
+# score 0.75+ so this threshold mainly excludes genuinely different patterns
+MIN_SIMILARITY_SCORE = 0.40
 
 
 class RAGRetriever:
@@ -63,7 +71,7 @@ class RAGRetriever:
                                            settings=chromadb.Settings(anonymized_telemetry=False))
         try:
             collection = client.get_collection(
-                name=settings.chroma_collection_fraud
+                name=settings.chroma_collection_fraud,
             )
             logger.info(
                 "chromadb_collection_loaded",
@@ -79,7 +87,11 @@ class RAGRetriever:
             )
             return client.get_or_create_collection(
                 name=settings.chroma_collection_fraud,
-                metadata={"hnsw:space": "cosine"},
+                metadata={
+                    "hnsw:space": "cosine",  # cosine similarity for text
+                    "hnsw:construction_ef": 100,
+                    "hnsw:M": 16,
+                },
             )
 
     # ── Query text builder ────────────────────────────────────────────────────
@@ -162,36 +174,34 @@ class RAGRetriever:
 
         query_embedding = self.embedding_model.encode(query_text).tolist()
 
-        if customer_id:
-            # Customer-specific history first — directly relevant precedent
-            customer_results = self._query_chromadb(
-                query_embedding=query_embedding,
-                n_results=min(2, n_results),
-                where={"customerId": {"$eq": customer_id}},
-            )
-        else:
-            customer_results = []
-
-        # General similarity search — no velocity filter.
-        # With sufficient confirmed cases, cosine similarity naturally
-        # retrieves the most relevant pattern.
-        general_n = n_results - len(customer_results)
-        general_results = self._query_chromadb(
+        # Fetch top candidates without WHERE filter — ChromaDB 0.4.x has
+        # known issues returning correct n_results when WHERE filter is combined
+        # with HNSW index. Filter by customerId in Python instead.
+        fetch_n = max(n_results * 4, 20)  # fetch enough to find n_results after filtering
+        all_results = self._search_similar(
             query_embedding=query_embedding,
-            n_results=general_n + 2,
-            where=None,
+            n_results=fetch_n,
         )
 
-        # Merge: customer-specific cases first, then general cases
-        # Deduplicate by transactionId
-        seen_ids = {r["metadata"]["transactionId"] for r in customer_results}
-        deduped_general = [
-            r for r in general_results
-            if r["metadata"]["transactionId"] not in seen_ids
-        ]
+        if customer_id:
+            # Prioritise customer-specific cases — put them first
+            customer_results = [
+                r for r in all_results
+                if r["metadata"].get("customerId") == customer_id
+            ]
+            other_results = [
+                r for r in all_results
+                if r["metadata"].get("customerId") != customer_id
+            ]
+            combined = customer_results + other_results
+        else:
+            combined = all_results
 
-        combined = customer_results + deduped_general
         results = combined[:n_results]
+
+        # logger.info("pre_filter_similarities",
+        #             count=len(combined),
+        #             similarities=[round(r["similarity"], 3) for r in combined[:10]])
 
         # Filter out low-similarity results — not useful context for agents
         results = [r for r in results if r["similarity"] >= MIN_SIMILARITY_SCORE]
@@ -210,69 +220,74 @@ class RAGRetriever:
 
         return results
 
-    def _query_chromadb(
+    def _search_similar(
             self,
             query_embedding: list,
             n_results: int,
-            where: dict = None,
     ) -> list[dict]:
-        """Execute ChromaDB query and normalize results into clean dicts."""
-        if n_results <= 0:
-            return []
-
-        # ChromaDB raises if n_results > collection size
-        actual_n = min(n_results, self.collection.count())
-        if actual_n == 0:
-            return []
+        """
+        In-memory cosine similarity — re-embeds stored documents at query time.
+        Bypasses ChromaDB HNSW index which has multi-process corruption issues.
+        Safe for concurrent read/write from separate processes.
+        """
+        import numpy as np
 
         try:
-            kwargs = {
-                "query_embeddings": [query_embedding],
-                "n_results": actual_n,
-                "include": ["documents", "metadatas", "distances"],
+            client = chromadb.PersistentClient(
+                path=settings.chroma_persist_dir,
+                settings=chromadb.Settings(anonymized_telemetry=False),
+            )
+            collection = client.get_collection(
+                name=settings.chroma_collection_fraud,
+            )
+            count = collection.count()
+        except Exception:
+            return []
+
+        if count == 0:
+            return []
+
+        # Fetch documents and metadata — NOT embeddings (may be None in 0.6.x)
+        all_docs = collection.get(
+            include=["documents", "metadatas"],
+            limit=count,
+        )
+
+        documents = all_docs["documents"]
+        metadatas = all_docs["metadatas"]
+
+        if not documents:
+            return []
+
+        # Re-embed stored documents for similarity comparison
+        # Fast enough for <1000 docs — all-MiniLM-L6-v2 does batch in ~50ms
+        stored_embeddings = self.embedding_model.encode(
+            documents,
+            batch_size=32,
+            show_progress_bar=False,
+        )
+
+        query_vec = np.array(query_embedding)
+        stored_vecs = np.array(stored_embeddings)
+
+        # Cosine similarity
+        stored_norms = np.linalg.norm(stored_vecs, axis=1, keepdims=True)
+        query_norm = np.linalg.norm(query_vec)
+        stored_normalized = stored_vecs / (stored_norms + 1e-10)
+        query_normalized = query_vec / (query_norm + 1e-10)
+        similarities = stored_normalized @ query_normalized
+
+        # Top N by similarity
+        top_indices = np.argsort(similarities)[::-1][:n_results]
+
+        return [
+            {
+                "text": documents[idx],
+                "similarity": round(float(similarities[idx]), 4),
+                "metadata": metadatas[idx],
             }
-            if where:
-                kwargs["where"] = where
-
-            results = self.collection.query(**kwargs)
-
-        except Exception as e:
-            # If velocity-filtered query fails (e.g. no matching cases yet),
-            # fall back to unfiltered query so retrieval is never blocked
-            if where:
-                logger.debug(
-                    "chromadb_filtered_query_failed_falling_back",
-                    filter=where,
-                    error=str(e),
-                )
-                try:
-                    results = self.collection.query(
-                        query_embeddings=[query_embedding],
-                        n_results=actual_n,
-                        include=["documents", "metadatas", "distances"],
-                    )
-                except Exception as e2:
-                    logger.error("chromadb_query_failed", error=str(e2))
-                    return []
-            else:
-                logger.error("chromadb_query_failed", error=str(e))
-                return []
-
-        # ChromaDB returns distances (lower = more similar for cosine)
-        # Convert to similarity score (higher = more similar): similarity = 1 - distance
-        normalized = []
-        for doc, metadata, distance in zip(
-                results["documents"][0],
-                results["metadatas"][0],
-                results["distances"][0],
-        ):
-            normalized.append({
-                "text": doc,
-                "similarity": round(1 - distance, 4),
-                "metadata": metadata,
-            })
-
-        return normalized
+            for idx in top_indices
+        ]
 
     # ── Prompt injection ──────────────────────────────────────────────────────
 
@@ -299,9 +314,13 @@ class RAGRetriever:
             confirmed_by = metadata.get("confirmedBy", "system")
             embedded_at = metadata.get("embeddedAt", "")[:10]  # date only
 
+            txn_id = metadata.get("transactionId", "unknown")
+            txn_short = txn_id[-8:] if txn_id != "unknown" else "unknown"
+
             lines.append(
                 f"Case {i} (similarity: {similarity_pct}%, "
                 f"pattern: {pattern}, confidence: {confidence:.2f}, "
+                f"txn: ...{txn_short}, "
                 f"confirmed: {embedded_at}, by: {confirmed_by}):"
             )
             # Add the stored case text, indented

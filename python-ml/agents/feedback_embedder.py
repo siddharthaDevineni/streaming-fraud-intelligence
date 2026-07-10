@@ -17,13 +17,14 @@ How it works:
      → stores in ChromaDB with metadata for filtering
 """
 
-import chromadb
 import json
-import structlog
 import time
+from datetime import datetime, timezone
+
+import chromadb
+import structlog
 from config import settings
 from confluent_kafka import Consumer, KafkaError
-from datetime import datetime, timezone
 from sentence_transformers import SentenceTransformer
 
 logger = structlog.get_logger()
@@ -92,7 +93,11 @@ class FeedbackEmbedder:
             settings=chromadb.Settings(anonymized_telemetry=False))
         collection = client.get_or_create_collection(
             name=settings.chroma_collection_fraud,
-            metadata={"hnsw:space": "cosine"},  # cosine similarity for text
+            metadata={
+                "hnsw:space": "cosine",  # cosine similarity for text
+                "hnsw:construction_ef": 100,
+                "hnsw:M": 16,
+            },
         )
         logger.info(
             "chromadb_ready",
@@ -309,7 +314,7 @@ class FeedbackEmbedder:
                     transaction_id=txn_id,
                     features_count=len(features),
                     ml_score=raw.get("mlFraudScore"))
-    
+
         self._cache_prediction(raw)
         txn_id = raw.get("transactionId")
 
@@ -355,7 +360,7 @@ class FeedbackEmbedder:
                 transaction_id=txn_id,
                 hint="waiting for ml-predictions to be cached",
             )
-            self.pending_feedback[txn_id] = raw    # ← store, don't discard
+            self.pending_feedback[txn_id] = raw  # ← store, don't discard
             return
 
         features = cached["features"]
@@ -367,7 +372,7 @@ class FeedbackEmbedder:
         # velocity=1 and near-zero ML score are timing lag artifacts, not
         # representative fraud patterns. They would poison ChromaDB with
         # vpn_bot_fraud cases that match every subsequent transaction.
-        if velocity <= 1 and ml_score < 0.01:
+        if velocity <= 2 and ml_score < 0.1:
             logger.debug(
                 "embedding_skipped_cold_start_artifact",
                 transaction_id=txn_id,
