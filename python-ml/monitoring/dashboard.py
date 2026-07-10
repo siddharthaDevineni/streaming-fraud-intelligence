@@ -65,9 +65,13 @@ def get_consumer() -> Consumer:
     return consumer
 
 
-@st.cache_resource
+@st.cache_resource(ttl=5)
 def get_chromadb_collection():
-    """Connect to ChromaDB — returns None if collection doesn't exist yet."""
+    """
+    Connect to ChromaDB — refreshes every 5s to pick up cases
+    written by feedback_embedder.py (separate process).
+    Returns None if collection does not exist yet.
+    """
     try:
         client = chromadb.PersistentClient(
             path=settings.chroma_persist_dir,
