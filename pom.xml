@@ -19,7 +19,7 @@
     <description>Multi-agent AI fraud detection with Kafka streaming intelligence</description>
 
     <properties>
-        <java.version>25</java.version>
+        <java.version>21</java.version>
     </properties>
 
     <dependencies>
