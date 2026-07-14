@@ -1,5 +1,7 @@
 #!/bin/bash
 
+BOOTSTRAP_SERVER=${BOOTSTRAP_SERVER:-localhost:9092}
+
 echo "Setting up Kafka topics for Streaming-Intelligent Real-time AI agentic fraud detection..."
 
 # Waiting for Kafka to be ready...
@@ -14,8 +16,8 @@ create_topic() {
 
   echo "Creating topic: $topic_name (partitions: $partitions, replication: $replication)"
 
-  docker exec kafka kafka-topics --create \
-  --bootstrap-server localhost:9092 \
+  kafka-topics --create \
+  --bootstrap-server "$BOOTSTRAP_SERVER" \
   --topic "$topic_name" \
   --partitions "$partitions" \
   --replication-factor "$replication"
@@ -50,7 +52,7 @@ create_topic "fraud-decisions" 3 1
 # List all topics
 echo ""
 echo "Topics created successfully! Current topics:"
-docker exec kafka kafka-topics --list --bootstrap-server localhost:9092
+kafka-topics --list --bootstrap-server "$BOOTSTRAP_SERVER"
 
 echo ""
 echo "Kafka infrastructure is ready for Streaming-Intelligent Real-time AI Agentic Fraud Detection...!"
