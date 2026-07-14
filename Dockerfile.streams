@@ -1,0 +1,39 @@
+# ── Build stage ───────────────────────────────────────────────────────────────
+FROM maven:3.9-eclipse-temurin-21 AS builder
+
+WORKDIR /build
+
+# Copy pom.xml first — Docker layer cache avoids re-downloading dependencies
+# when only source code changes
+COPY pom.xml .
+RUN mvn dependency:go-offline -q
+
+# Copy source and build
+COPY src ./src
+RUN mvn package -DskipTests -q
+
+# ── Runtime stage ──────────────────────────────────────────────────────────────
+FROM eclipse-temurin:21-jre-jammy
+
+WORKDIR /app
+
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Copy built jar from build stage
+COPY --from=builder /build/target/agentic-fraud-engine-1.0.0.jar app.jar
+
+# Kafka Streams needs a writable directory for RocksDB state stores
+RUN mkdir -p /tmp/kafka-streams && chown -R appuser:appuser /tmp/kafka-streams
+
+USER appuser
+
+EXPOSE 8080
+
+# JVM tuning for container environments:
+# -XX:+UseContainerSupport  → respect container CPU/memory limits
+# -XX:MaxRAMPercentage=75.0 → use 75% of container memory for heap
+ENTRYPOINT ["java", \
+  "-XX:+UseContainerSupport", \
+  "-XX:MaxRAMPercentage=75.0", \
+  "-jar", "app.jar"]
