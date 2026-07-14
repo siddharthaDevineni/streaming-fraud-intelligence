@@ -1,58 +1,302 @@
-version: '3.8'
+# ── Streaming Fraud Intelligence — full stack ──────────────────────────────────
+#
+# Start everything:     docker compose up -d
+# Stop everything:      docker compose down
+# Full reset:           docker compose down -v
+# View logs:            docker compose logs -f <service>
+# Rebuild after change: docker compose build <service> && docker compose up -d <service>
+#
+# Services:
+#   kafka              → Kafka broker (KRaft mode, no ZooKeeper)
+#   kafka-ui           → Kafka UI at http://localhost:8090
+#   spring-boot        → Java: Kafka Streams enrichment + routing
+#   inference-consumer → Python: XGBoost + RAG + LangChain agents
+#   feedback-embedder  → Python: ChromaDB embedding pipeline
+#   online-learner     → Python: River SRPClassifier
+#   fastapi            → Python: synchronous REST endpoint
+#   streamlit          → Python: real-time dashboard at http://localhost:8501
+
+networks:
+  fraud-net:
+    driver: bridge
+
+volumes:
+  kafka-data:
+  chroma-data:      # shared ChromaDB volume between embedder + inference
+  models-data:      # XGBoost model + scaler shared between services
+  kafka-streams-data:
+
+# ── Shared environment snippets ───────────────────────────────────────────────
+x-kafka-env: &kafka-env
+  KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+x-python-env: &python-env
+  KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+  CHROMA_PERSIST_DIR: /data/chroma_db
+  XGBOOST_MODEL_PATH: /models/fraud_xgb.pkl
+  SCALER_PATH: /models/scaler.pkl
+  GROQ_API_KEY: ${GROQ_API_KEY}
+  LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
+  LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
+  LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-streaming-fraud-intelligence}
 
 services:
+
+  # ── Kafka broker (KRaft mode) ───────────────────────────────────────────────
   kafka:
     image: confluentinc/cp-kafka:7.8.0
-    hostname: kafka
     container_name: kafka
+    hostname: kafka
+    networks:
+      - fraud-net
     ports:
-      - "9092:9092"
-      - "9101:9101"
-    environment:
-      # KRaft mode
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      - "9092:9092"   # external access (host → kafka)
+      - "9101:9101"   # JMX metrics
     volumes:
       - kafka-data:/var/lib/kafka/data
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: >-
+        CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: >-
+        PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENERS: >-
+        PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: localhost
+      KAFKA_CONFLUENT_SCHEMA_REGISTRY_URL: ""
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     healthcheck:
-      test: kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
       interval: 10s
       timeout: 10s
       retries: 10
       start_period: 30s
-    networks:
-      - fraud-detection-network
 
+  # ── Kafka UI ────────────────────────────────────────────────────────────────
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
+    networks:
+      - fraud-net
+    ports:
+      - "8090:8080"
     depends_on:
       kafka:
         condition: service_healthy
-    ports:
-      - "8090:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+  # ── Topic setup (runs once then exits) ────────────────────────────────────
+  kafka-setup:
+    image: confluentinc/cp-kafka:7.8.0
+    container_name: kafka-setup
+    user: root
     networks:
-      - fraud-detection-network
+      - fraud-net
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+    volumes:
+      - ./setup-topics.sh:/setup-topics.sh
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic transactions --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic customerProfiles --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic enriched-transactions --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic ml-predictions --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic fraud-decisions --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic fraud-alerts --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic human-review --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic approved-transactions --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic analyst-feedback --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic model-health --partitions 3 --replication-factor 1
+        echo 'All topics created successfully'
+    restart: "no"
 
-volumes:
-  kafka-data:
+  # ── Spring Boot — Kafka Streams enrichment + routing ───────────────────────
+  spring-boot:
+    build:
+      context: .
+      dockerfile: Dockerfile.streams
+    container_name: spring-boot
+    networks:
+      - fraud-net
+    ports:
+      - "8080:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-setup:
+        condition: service_completed_successfully
+    environment:
+      <<: *kafka-env
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      PYTHON_ML_SERVICE_URL: http://fastapi:8000
+    volumes:
+      - kafka-streams-data:/tmp/kafka-streams   # RocksDB state stores
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/actuator/health" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
 
-networks:
-  fraud-detection-network:
-    name: fraud-detection-network
+  # ── Python base — shared image for all Python services ─────────────────────
+  # Built once, reused by all Python services below
+  # Run: docker compose build python-base
+  python-base:
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    image: streaming-fraud-intelligence/python-ml:latest
+    profiles:
+      - build-only   # never starts as a container — build target only
+
+
+  model-trainer:
+    image: streaming-fraud-intelligence/python-ml:latest
+    container_name: model-trainer
+    user: root  # ← run as root for file writes
+    command: [ "python", "-m", "training.train_xgboost" ]
+    environment:
+      <<: *python-env
+      MLFLOW_ALLOW_FILE_STORE: "true"
+      MLFLOW_TRACKING_URI: "/models/mlruns"
+    volumes:
+      - models-data:/models
+    restart: "no"  # runs once then exits
+
+  # ── XGBoost inference + RAG + LangChain agents ────────────────────────────
+  inference-consumer:
+    image: streaming-fraud-intelligence/python-ml:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    container_name: inference-consumer
+    networks:
+      - fraud-net
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-setup:
+        condition: service_completed_successfully
+    command: ["python", "-m", "consumers.inference_consumer"]
+    environment:
+      <<: *python-env
+    volumes:
+      - chroma-data:/data/chroma_db
+      - models-data:/models
+    restart: unless-stopped
+
+  # ── ChromaDB feedback embedder ────────────────────────────────────────────
+  feedback-embedder:
+    image: streaming-fraud-intelligence/python-ml:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    container_name: feedback-embedder
+    networks:
+      - fraud-net
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-setup:
+        condition: service_completed_successfully
+    command: ["python", "-m", "agents.feedback_embedder"]
+    environment:
+      <<: *python-env
+    volumes:
+      - chroma-data:/data/chroma_db
+      - models-data:/models
+    restart: unless-stopped
+
+  # ── River online learner ──────────────────────────────────────────────────
+  online-learner:
+    image: streaming-fraud-intelligence/python-ml:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    container_name: online-learner
+    networks:
+      - fraud-net
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-setup:
+        condition: service_completed_successfully
+    command: ["python", "-m", "training.online_learner"]
+    environment:
+      <<: *python-env
+    volumes:
+      - models-data:/models
+    restart: unless-stopped
+
+  # ── FastAPI synchronous endpoint ──────────────────────────────────────────
+  fastapi:
+    image: streaming-fraud-intelligence/python-ml:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    container_name: fastapi
+    networks:
+      - fraud-net
+    ports:
+      - "8000:8000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "api.server:app",
+              "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *python-env
+    volumes:
+      - chroma-data:/data/chroma_db
+      - models-data:/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── Streamlit dashboard ───────────────────────────────────────────────────
+  streamlit:
+    image: streaming-fraud-intelligence/python-ml:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+    container_name: streamlit
+    networks:
+      - fraud-net
+    ports:
+      - "8501:8501"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-setup:
+        condition: service_completed_successfully
+    command: ["streamlit", "run", "monitoring/dashboard.py",
+              "--server.port", "8501",
+              "--server.address", "0.0.0.0",
+              "--server.headless", "true"]
+    environment:
+      <<: *python-env
+    volumes:
+      - chroma-data:/data/chroma_db
+    restart: unless-stopped

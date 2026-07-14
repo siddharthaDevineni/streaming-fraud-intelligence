@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+
+# Python ML layer — handled by Dockerfile.python.python separately
+python-ml/.venv
+python-ml/chroma_db
+python-ml/mlruns
+python-ml/models/*.pkl
+python-ml/models/*.keras
+python-ml/models/*.json
+python-ml/__pycache__
+python-ml/**/__pycache__
+python-ml/**/*.pyc
+python-ml/mlruns/
+python-ml/pyvenv.cfg
+python-ml/pyproject.toml
+python-ml/bin
+python-ml/lib
+python-ml/include
+python-ml/LICENSE.txt
+python-ml/etc
+python-ml/lib64
+python-ml/share
+
+# Java build artifacts — builder stage handles compilation
+target/
+*.class
+
+# IDE
+.idea
+*.iml
+.vscode
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs — not needed in containers
+docs/
+*.md
+*.png
+*.gif
+*.mp4
+
+# Environment files — passed as Docker secrets or env vars
+.env
+*.env

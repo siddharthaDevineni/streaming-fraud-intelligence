@@ -31,6 +31,8 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
+from config import settings
+
 logger = structlog.get_logger()
 
 # Feature columns - must match FEATURE_COLUMNS in features/engineer.py exactly
@@ -145,7 +147,7 @@ def generate_synthetic_data(n_samples: int = 10000) -> tuple:
 
 def train():
     os.makedirs("models", exist_ok=True)
-    mlflow.set_tracking_uri("mlruns")
+    mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
     mlflow.set_experiment("fraud-xgboost")
 
     logger.info("Generating synthetic training data")
@@ -209,14 +211,15 @@ def train():
         print(classification_report(y_test, y_pred, target_names=["legitimate", "fraud"]))
 
         # Save model and scaler
-        joblib.dump(model, "models/fraud_xgb.pkl")
-        joblib.dump(scaler, "models/scaler.pkl")
+        os.makedirs(os.path.dirname(settings.xgboost_model_path), exist_ok=True)
+        joblib.dump(model, settings.xgboost_model_path)
+        joblib.dump(scaler, settings.scaler_path)
         mlflow.xgboost.log_model(model, "model")
 
-        logger.info("model_saved", model_path="models/fraud_xgb.pkl", auc=round(auc, 4))
+        logger.info("model_saved", model_path=settings.xgboost_model_path, auc=round(auc, 4))
 
-    print("\nModel saved to models/fraud_xgb.pkl")
-    print("Scaler saved to models/scaler.pkl")
+    print("\nModel saved to ${settings.xgboost_model_path}")
+    print("Scaler saved to ${settings.scaler_path}")
     print("MLflow run logger to mlruns/xgb-v1")
     print("\nNext: python consumers/inference_consumer.py")
 

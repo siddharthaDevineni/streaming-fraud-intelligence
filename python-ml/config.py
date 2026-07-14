@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     langchain_endpoint: str = "https://api.smith.langchain.com"
 
     model_config = SettingsConfigDict(
-        env_file="../.env",
+        env_file=["../.env", ".env"],
         env_file_encoding="utf-8",
         extra="ignore",
     )

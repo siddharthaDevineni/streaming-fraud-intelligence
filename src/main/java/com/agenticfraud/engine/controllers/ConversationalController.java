@@ -43,7 +43,8 @@ public class ConversationalController {
   private static final Logger logger =
           LoggerFactory.getLogger(ConversationalController.class);
 
-  private static final String PYTHON_BASE_URL = "http://localhost:8000";
+  private static final String PYTHON_BASE_URL =
+          System.getenv().getOrDefault("PYTHON_ML_SERVICE_URL", "http://localhost:8000");
 
   private final RestTemplate restTemplate;
   private final ObjectMapper objectMapper;
