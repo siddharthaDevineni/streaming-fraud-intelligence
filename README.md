@@ -8,9 +8,12 @@ explainability, ChromaDB RAG (historical and confirmed fraud case retrieval with
 LangChain multi-agent LLM analysis, River online learning, and synchronous FastAPI endpoints — all wired as a continuous
 feedback loop.
 
+**Fully containerized — `docker compose up -d` starts all full stack services.**
+
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Siddhartha_Devineni-blue?style=flat&logo=linkedin)](https://www.linkedin.com/in/siddhartha-devineni/)
 [![Medium](https://img.shields.io/badge/Medium-Article-black?style=flat&logo=medium)](https://medium.com/@siddhartha.devineni/kafka-streams-make-ai-agents-fraud-detection-smarter-55fce4d6be3a)
 [![Dev.to](https://img.shields.io/badge/dev.to-Article-0A0A0A?style=flat&logo=devdotto)](https://dev.to/siddhartha_devineni_896e9/kafka-streams-make-ai-agents-fraud-detection-smarter-24c1)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat&logo=docker)](docker-compose.yml)
 
 ---
 
@@ -19,7 +22,8 @@ feedback loop.
 ![Streaming Fraud Intelligence Dashboard](docs/demo_shot_engine_gif.gif)
 
 > Real-time Streamlit dashboard: live transaction feed with LLM-decided fraud patterns, RAG similarity scores, agent
-> consensus, and a ~8% confidence improvement panel showing the measurable impact of ChromaDB historical case retrieval on
+> consensus, and a ~8% confidence improvement panel showing the measurable impact of ChromaDB historical case retrieval
+> on
 > agent reasoning.
 ![Dashboard screenshot](docs/agentic_fraud_rag_with_fresh_models.png)
 
@@ -500,6 +504,7 @@ mvn exec:java \
 ```
 
 **Full reset (without Docker):**
+
 ```bash
 docker compose down -v
 docker compose up -d kafka kafka-ui
@@ -508,6 +513,7 @@ rm -rf /tmp/kafka-streams/streaming-fraud-intelligence/
 rm -rf python-ml/chroma_db
 # Restart all services
 ```
+
 ---
 
 ## Kafka Topics
@@ -532,11 +538,13 @@ rm -rf python-ml/chroma_db
 ## Tech Stack
 
 **Java layer:**
+
 - Java 21, Spring Boot 4.1
 - Apache Kafka Streams 4.3
 - Spring Web — `RestTemplate` proxying to Python FastAPI
 
 **Python layer:**
+
 - Python 3.12
 - XGBoost 2.0 + scikit-learn (`StandardScaler`, `train_test_split`) + SHAP `TreeExplainer`
 - `joblib` — model serialization (consistent save/load format)
@@ -544,15 +552,19 @@ rm -rf python-ml/chroma_db
 - Polars 0.20 (feature engineering — 19 features)
 - MLflow (XGBoost training experiment tracking, file store backend)
 - River 0.21 `SRPClassifier` (online learning, no retraining needed)
-- ChromaDB 0.6.3 (persistent vector store, SQLite backend) + sentence-transformers `all-MiniLM-L6-v2` (384-dim, local, CPU)
+- ChromaDB 0.6.3 (persistent vector store, SQLite backend) + sentence-transformers `all-MiniLM-L6-v2` (384-dim, local,
+  CPU)
 - LangChain + LangChain-Groq (agent orchestration) + LangSmith (full pipeline observability)
 - FastAPI + uvicorn (synchronous REST endpoint)
 - confluent-kafka 2.3, Pydantic v2, structlog, httpx
 - Streamlit 1.59 + Plotly (real-time dashboard)
 
 **Infrastructure:**
-- Docker and Docker Compose v2 — full stack containerization (10 services)
-- Kafka KRaft mode (no ZooKeeper), 3 partitions, 1 replica
+
+- Docker and Docker Compose v2 — full stack containerization, 10 services total:
+    - 8 long-running (Kafka, Spring Boot, 5 Python microservices, Streamlit) and kafka-setup (topic creation, exits) +
+      model-trainer (one-shot training, exits)
+- Kafka
 - Named volumes: `kafka-data`, `chroma-data`, `models-data`, `kafka-streams-data`
 
 ---
