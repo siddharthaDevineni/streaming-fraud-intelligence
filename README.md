@@ -1,8 +1,12 @@
 # Streaming Fraud Intelligence
 
-> **Kafka Streams + XGBoost + LangChain Agents + ChromaDB RAG + River Online Learning — a self-improving fraud detection pipeline**
+> **Kafka Streams + XGBoost + LangChain Agents + ChromaDB RAG + River Online Learning — a self-improving fraud detection
+pipeline**
 
-A hybrid Java/Python fraud detection system combining Kafka Streams real-time enrichment, XGBoost ML inference with SHAP explainability, ChromaDB RAG (historical and confirmed fraud case retrieval with chain-of-thought agent guidance), LangChain multi-agent LLM analysis, River online learning, and synchronous FastAPI endpoints — all wired as a continuous feedback loop.
+A hybrid Java/Python fraud detection system combining Kafka Streams real-time enrichment, XGBoost ML inference with SHAP
+explainability, ChromaDB RAG (historical and confirmed fraud case retrieval with chain-of-thought agent guidance),
+LangChain multi-agent LLM analysis, River online learning, and synchronous FastAPI endpoints — all wired as a continuous
+feedback loop.
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Siddhartha_Devineni-blue?style=flat&logo=linkedin)](https://www.linkedin.com/in/siddhartha-devineni/)
 [![Medium](https://img.shields.io/badge/Medium-Article-black?style=flat&logo=medium)](https://medium.com/@siddhartha.devineni/kafka-streams-make-ai-agents-fraud-detection-smarter-55fce4d6be3a)
@@ -14,8 +18,10 @@ A hybrid Java/Python fraud detection system combining Kafka Streams real-time en
 
 ![Streaming Fraud Intelligence Dashboard](docs/demo_shot_engine_gif.gif)
 
-> Real-time Streamlit dashboard: live transaction feed with LLM-decided fraud patterns, RAG similarity scores, agent consensus, and a ~8% confidence improvement panel showing the measurable impact of ChromaDB historical case retrieval on agent reasoning.
-![Dashboard screenshot](docs/demo_engine.png)
+> Real-time Streamlit dashboard: live transaction feed with LLM-decided fraud patterns, RAG similarity scores, agent
+> consensus, and a ~8% confidence improvement panel showing the measurable impact of ChromaDB historical case retrieval on
+> agent reasoning.
+![Dashboard screenshot](docs/agentic_fraud_rag_with_fresh_models.png)
 
 ---
 
@@ -24,7 +30,7 @@ A hybrid Java/Python fraud detection system combining Kafka Streams real-time en
 Five layers running concurrently and feeding each other:
 
 1. **Kafka Streams** `Java` — real-time velocity windows, customer profile KTable joins,
-    enriched-transactions topic
+   enriched-transactions topic
 2. **XGBoost + SHAP** `Python` — ML inference with explainability, 19 engineered features via Polars,
    StandardScaler, SHAP TreeExplainer top-3 contributions per prediction
 3. **ChromaDB RAG** `Python` — confirmed fraud cases embedded via sentence-transformers,
@@ -75,7 +81,7 @@ that LLMs lack, and RAG provides the institutional memory that rules cannot enco
 
 ![diagram](docs/architecture_agentic_fraud_new.png)
 
-**Key architectural decision:** All ML inference and LLM agent reasoning runs in Python. 
+**Key architectural decision:** All ML inference and LLM agent reasoning runs in Python.
 Java owns stateless and stateful stream processing layers (repartition, velocity windows, KTable joins, and
 routing). Python owns the entire intelligence layer. The two platforms communicate via Kafka topics.
 
@@ -104,13 +110,15 @@ Three phases in `python-ml/agents/agent_coordinator.py`:
 Reads all preceding insights + RAG context and outputs `RISK_SCORE`, `REASONING`,`RECOMMENDATION`, and `PATTERN`.
 
 **Phase 3: The decision synthesis** (no additional LLM call):
-Consensus coordinator's `RISK_SCORE` is used directly as confidence — the LLM assesses its own certainty rather than a hardcoded tier formula.
+Consensus coordinator's `RISK_SCORE` is used directly as confidence — the LLM assesses its own certainty rather than a
+hardcoded tier formula.
 
 Total wall-clock time per transaction: **1.5–2.7 seconds** (Groq API latency ~300–400ms per call)
 
 ### Chain-of-thought RAG guidance
 
-Each agent receives a specialisation-specific instruction injected only when confirmed historical cases are present in the streaming context:
+Each agent receives a specialisation-specific instruction injected only when confirmed historical cases are present in
+the streaming context:
 
 ```python
 # BehaviorAnalyst — injected when ChromaDB cases are retrieved
@@ -119,7 +127,7 @@ weigh this heavily in your RISK_SCORE. Confirmed historical cases with matching 
 evidence of the same attack type."""
 ```
 
-Without this explicit guidance, agents acknowledge historical cases in their reasoning text but do not reliably change 
+Without this explicit guidance, agents acknowledge historical cases in their reasoning text but do not reliably change
 their numerical RISK_SCORE. With it, confidence increases measurably when confirmed similar cases are available.
 
 ---
@@ -139,8 +147,9 @@ hour, is_off_hours, is_weekend, is_high_risk_customer, is_low_risk_customer, is_
 ### XGBoost inference + SHAP (`consumers/inference_consumer.py`)
 
 - Pre-trained XGBoost model with StandardScaler applied at inference time (training-serving skew prevention)
-- SHAP TreeExplainer top-3 feature contributions per prediction - used for explainability 
-- Publishes `MLPrediction` to `ml-predictions` topic including `ragContext` field (consumed by dashboard + ChromaDB embedder)
+- SHAP TreeExplainer top-3 feature contributions per prediction - used for explainability
+- Publishes `MLPrediction` to `ml-predictions` topic including `ragContext` field (consumed by dashboard + ChromaDB
+  embedder)
 - Publishes `FraudDecisionOutput` to `fraud-decisions` (consumed by Java for routing)
 - MLflow experiment tracking for training runs
 
@@ -195,11 +204,13 @@ Case 3 (similarity: 76%, pattern: vpn_bot_fraud, confidence: 0.85, confirmed: 20
 
 Use these cases as precedent. Higher similarity = more relevant to current transaction.
 ```
+
 ---
 
 ### How it works
 
 **Embedding** (`agents/feedback_embedder.py`):
+
 - Subscribes to both `ml-predictions` and `analyst-feedback` topics via a single consumer
 - Embeds confirmed fraud cases using `sentence-transformers all-MiniLM-L6-v2`
 - **LLM-decided pattern:** `fraudPattern` field from `analyst-feedback` (set by the
@@ -214,6 +225,7 @@ Use these cases as precedent. Higher similarity = more relevant to current trans
 - Self-bootstrapping: TXN #4 in an attack retrieves cases embedded by TXN #3 in the same run
 
 **Retrieval** (`agents/rag_retriever.py`):
+
 - Called at inference time in `inference_consumer.py` — RAG context is available
   to Python agents immediately
 - Dual-query: customer-specific cases (priority) + general similar cases (deduplicated)
@@ -245,18 +257,19 @@ by reasoning from `is_rapid_fire`, `is_bot_device`, velocity count, and amount r
 together.
 
 ### Measured impact
+
 | Metric               | Cold Start (no RAG) | With Historical Context |
 |----------------------|---------------------|-------------------------|
-| Avg agent confidence | 91.2%               | 99.0%                   |
-| Transactions         | 5                   | 25                      |
-| Avg similarity       | —                   | 81.8%                   |
-| Avg cases retrieved  | —                   | 2.9                     |
-| RAG coverage         | —                   | 83.3%                   |
-| **Confidence delta** | —                   | **+7.8%**               |
+| Avg agent confidence | 89.2%               | 98.9%                   |
+| Transactions         | 5                   | 15                      |
+| Avg similarity       | —                   | 80.6%                   |
+| Avg cases retrieved  | —                   | 2.7                     |
+| RAG coverage         | —                   | 66.7%                   |
+| **Confidence delta** | —                   | **+9.7%**               |
 
-Cold start confidence remains high (91%+) because agents reason correctly
+Cold start confidence remains high (89.2%+) because agents reason correctly
 from raw transaction signals (bot device, VPN, suspicious merchant, rapid
-fire) independent of ML score or historical context — demonstrating the
+fire) and trained models, independent of ML score or historical context — demonstrating the
 four-layer compensation mechanism. RAG pushes certainty from high to
 near-certain.
 The delta is LLM-driven — agents explicitly instructed to weight confirmed historical
@@ -301,14 +314,14 @@ Context: 15 transactions in 5 minutes | BOT-DEVICE-1 | rapidFire=true
 RAG: 3 confirmed card_testing cases at 79-82% similarity
 ```
 
-| Agent             | Risk | Key finding                                                       |
-|-------------------|------|-------------------------------------------------------------------|
-| BehaviorAnalyst   | 95%  | High velocity highly unusual small amounts = detection avoidance  |
-| PatternDetector   | 95%  | Matches card testing: rapid + small + suspicious merchant         |
-| RiskAssessor      | 85%  | HIGH risk customer, RAG: 3 confirmed cases at 82%  similarity     |
-| GeographicAnalyst | 95%  | Unknown location = VPN/proxy confirmed by historical cases        |
-| TemporalAnalyst   | 95%  | Sub-second intervals = bot automation                             |
-| Consensus         | 99%  | All evidence combined — high similarity to confirmed fraud        |
+| Agent             | Risk | Key finding                                                      |
+|-------------------|------|------------------------------------------------------------------|
+| BehaviorAnalyst   | 95%  | High velocity highly unusual small amounts = detection avoidance |
+| PatternDetector   | 95%  | Matches card testing: rapid + small + suspicious merchant        |
+| RiskAssessor      | 85%  | HIGH risk customer, RAG: 3 confirmed cases at 82%  similarity    |
+| GeographicAnalyst | 95%  | Unknown location = VPN/proxy confirmed by historical cases       |
+| TemporalAnalyst   | 95%  | Sub-second intervals = bot automation                            |
+| Consensus         | 99%  | All evidence combined — high similarity to confirmed fraud       |
 
 ---
 
@@ -345,15 +358,15 @@ merchant. Auto-approved without human review.
 
 ## Known Architectural Trade-offs
 
-### 1. Stream-table join timing lag
+### 1. KStream-KTable join timing lag
 
 Both the velocity KTable and Sub-topology 2 consume from `transactions` simultaneously
 (fan-out). Sub-topology 2 reads the velocity KTable before Sub-topology 1 has committed
-the current batch — so the first 2-4 transactions in a rapid-fire attack see stale velocity.
+the current batch — so the first 2–4 transactions in a rapid-fire attack see stale velocity.
 
 **Root cause:** `selectKey()` creates a repartition topic boundary (`KSTREAM-KEY-SELECT-0000000015-repartition`). With
-`COMMIT_INTERVAL_MS=100ms` (reduced from 1000ms) and transactions arriving every 200ms,
-the stale window covers ~2-4 transactions per burst.
+`COMMIT_INTERVAL_MS=100ms` (reduced from 1000 ms) and transactions arriving every 200ms,
+the stale window covers ~2–4 transactions per burst.
 
 **Four-layer compensation mechanism:**
 
@@ -366,17 +379,9 @@ the stale window covers ~2-4 transactions per burst.
    historical cases even when XGBoost scores 0.1% due to stale velocity
 
 **Measured:** 88.5% avg confidence for cold-start transactions (no RAG, stale velocity)
-vs 98.5% for transactions with historical context — system remains correct throughout.
+vs 98.5% for transactions with RAG's historical context — system remains correct throughout.
 
-### 2. fraud-decisions KStream vs. KTable
-
-`FraudDecision` is a per-transaction result, not a per-customer aggregate. Using a
-KTable keyed by `customerId` caused all 15 transactions in a burst to route via a
-0.5 confidence fallback — the KTable retained only the latest value per key, so Java
-always read TXN #1's decision for every subsequent transaction. Reading `fraud-decisions`
-as a plain KStream processes each decision exactly once in arrival order.
-
-### 3. LLM-driven confidence vs formula-based
+### 2. LLM-driven confidence vs formula-based tiers
 
 Agent confidence is now the consensus coordinator's own `RISK_SCORE` — the LLM
 assesses its certainty after reading all 10 agent insights plus RAG context. This
@@ -387,93 +392,122 @@ from RAG-informed decisions, rather than a hardcoded 90% for any 9+/10 agent agr
 
 ## Running Locally
 
-### Prerequisites
+### Option A — Docker Compose (recommended)
 
-- Java 21, Maven
-- Python 3.12
-- Docker + Docker Compose
+One command starts the entire stack — no Python environment setup,
+no multiple terminals for each service.
+
+**Prerequisites:**
+
+- Docker Desktop or Docker Engine + Docker Compose v2,
+- Java 21 (only for running TestDataGenerator locally)
 - Groq API key (free tier at [console.groq.com](https://console.groq.com))
-- LangSmith API key (free tier at [smith.langchain.com](https://smith.langchain.com))
-
-### 1 — Start Kafka
+- LangSmith API key (free tier at [smith.langchain.com](https://smith.langchain.com)) (optional, if you want to see full
+  ML pipeline observability)
 
 ```bash
+# 1 — Clone and configure
+git clone https://github.com/siddharthaDevineni/streaming-fraud-intelligence
+
+cd streaming-fraud-intelligence
+
+cp env.example .env
+# Edit .env — add your GROQ_API_KEY (free at console.groq.com)
+# Optionally add LANGCHAIN_API_KEY for LangSmith observability
+
+# 2 - Start all services
 docker compose up -d
+
+# 3 — Verify all services are running
+docker compose ps
+
+# 4 — Generate test data (runs locally, connects to Docker Kafka)
+mvn exec:java \
+  -Dexec.mainClass="com.agenticfraud.engine.testing.TestDataGenerator" \
+  -Dexec.classpathScope="test"
+# Select Scenario 2: High velocity attack: (15 rapid transactions, triggers all pipeline layers, demonstrates RAG self-bootstrapping).
+```
+
+**Services and ports:**
+
+| Service             | URL                        | Description                                       |
+|---------------------|----------------------------|---------------------------------------------------|
+| Streamlit dashboard | http://localhost:8501      | Real-time Streaming Fraud Intelligence monitoring |
+| FastAPI             | http://localhost:8000/docs | Swagger UI + REST endpoints                       |
+| Kafka UI            | http://localhost:8090      | Topics browser + messages viewer                  |
+
+**Full reset:**
+
+```bash
+docker compose down -v   # removes all volumes (Kafka data, ChromaDB, models)
+docker compose up -d
+```
+
+### Option B — Without Docker (8 terminals)
+
+Use this if you want to modify Python code without rebuilding Docker images.
+
+**Prerequisites:** Java 21, Maven, Python 3.12, and Docker (for Kafka only)
+
+```bash
+# Terminal 0 — Kafka only via Docker
+docker compose up -d kafka kafka-ui
 ./setup-topics.sh
-```
 
-### 2 — Configure environment
-
-```bash
+# Configure environment (once)
+cp env.example .env
+# Edit .env — add your GROQ_API_KEY (free at console.groq.com)
+# Optionally add LANGCHAIN_API_KEY for LangSmith observability
 export GROQ_API_KEY=your-groq-api-key
-```
 
-Create `python-ml/.env`:
-
-```
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_API_KEY=lsv2_your_key
-LANGCHAIN_PROJECT=streaming-fraud-intelligence
-GROQ_API_KEY=your-groq-api-key
-```
-
-### 3 — Set up Python environment
-
-```bash
+# Set up Python environment (once)
 cd python-ml
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 export PYTHONPATH=$(pwd)
-```
 
-### 4 — Train XGBoost model (first time only)
-
-```bash
-python -m training.train_xgboost
+# Train XGBoost model (once)
+cd python-ml && source .venv/bin/activate && python -m training.train_xgboost
 # produces models/fraud_xgb.pkl and models/scaler.pkl
-```
 
-### 5 — Start all services (5 terminals)
-
-```bash
-# Terminal 1 — Kafka Streams enrichment + routing (Java)
+# Terminal 1 — Kafka Streams (Java)
 mvn spring-boot:run
 
-# Terminal 2 — XGBoost + RAG + LangChain agents
+# Do this for all the below terminals too
 cd python-ml && source .venv/bin/activate
+
+# Terminal 2 — XGBoost + RAG + LangChain agents
 python -m consumers.inference_consumer
 
 # Terminal 3 — ChromaDB feedback embedder
 python -m agents.feedback_embedder
 
-# Terminal 4 — Streamlit dashboard
-streamlit run monitoring/dashboard.py
-
-# Terminal 5 — River online learner
+# Terminal 4 — River online learner
 python -m training.online_learner
 
-# (Optional) Terminal 6 — FastAPI synchronous endpoints
+# Terminal 5 — FastAPI synchronous endpoint
 python -m api.server
 
+# Terminal 6 — Streamlit dashboard
+streamlit run monitoring/dashboard.py
+
+# Terminal 7
+mvn exec:java \
+  -Dexec.mainClass="com.agenticfraud.engine.testing.TestDataGenerator" \
+  -Dexec.classpathScope="test"
+# Select Scenario 2: High velocity attack: (15 rapid transactions, triggers all pipeline layers, demonstrates RAG self-bootstrapping).
 ```
 
-### 6 — Generate test data
-
-Run `TestDataGenerator.java` from your IDE — **Scenario 2: High velocity attack**
-(15 rapid transactions, triggers all pipeline layers, demonstrates RAG self-bootstrapping).
-
-### Full reset
-
+**Full reset (without Docker):**
 ```bash
-docker compose down -v   # wipes Kafka volumes
-docker compose up -d
+docker compose down -v
+docker compose up -d kafka kafka-ui
 ./setup-topics.sh
-rm -rf /tmp/kafka-streams/intelligent-fraud-detection/
+rm -rf /tmp/kafka-streams/streaming-fraud-intelligence/
 rm -rf python-ml/chroma_db
-# Restart ALL services — including feedback_embedder and dashboard
+# Restart all services
 ```
-
 ---
 
 ## Kafka Topics
@@ -490,7 +524,7 @@ rm -rf python-ml/chroma_db
 **Feedback loop:** `analyst-feedback` (auto-sink → River + ChromaDB)
 
 **Internal:** `KSTREAM-KEY-SELECT-repartition`, `current-velocity-repartition`,
-`velocity-windows-repartition`, and 
+`velocity-windows-repartition`, and
 `current-velocity-changelog`, `customerProfiles-STATE-STORE-changelog` — RocksDB backups for state recovery
 
 ---
@@ -498,28 +532,28 @@ rm -rf python-ml/chroma_db
 ## Tech Stack
 
 **Java layer:**
-
-- Java 25, Spring Boot 4.1
+- Java 21, Spring Boot 4.1
 - Apache Kafka Streams 4.3
 - Spring Web — `RestTemplate` proxying to Python FastAPI
 
 **Python layer:**
-
 - Python 3.12
-- XGBoost 2.0 + scikit-learn + SHAP (ML inference + explainability)
-- Polars 0.20 (feature engineering)
-- River 0.21 `SRPClassifier` (online learning)
-- ChromaDB 0.6.3 (local persistent vector store) + sentence-transformers `all-MiniLM-L6-v2` (384-dim, local)
-- LangChain + LangChain-Groq (agent orchestration) and LangSmith (observability)
+- XGBoost 2.0 + scikit-learn (`StandardScaler`, `train_test_split`) + SHAP `TreeExplainer`
+- `joblib` — model serialization (consistent save/load format)
+- `numpy` — in-memory cosine similarity search (bypasses ChromaDB HNSW)
+- Polars 0.20 (feature engineering — 19 features)
+- MLflow (XGBoost training experiment tracking, file store backend)
+- River 0.21 `SRPClassifier` (online learning, no retraining needed)
+- ChromaDB 0.6.3 (persistent vector store, SQLite backend) + sentence-transformers `all-MiniLM-L6-v2` (384-dim, local, CPU)
+- LangChain + LangChain-Groq (agent orchestration) + LangSmith (full pipeline observability)
 - FastAPI + uvicorn (synchronous REST endpoint)
-- MLflow (XGBoost training experiment tracking)
 - confluent-kafka 2.3, Pydantic v2, structlog, httpx
 - Streamlit 1.59 + Plotly (real-time dashboard)
 
 **Infrastructure:**
-
-- Docker Compose — Kafka KRaft broker + Kafka UI (port 8090)
-- 3 partitions, 1 replica (development)
+- Docker and Docker Compose v2 — full stack containerization (10 services)
+- Kafka KRaft mode (no ZooKeeper), 3 partitions, 1 replica
+- Named volumes: `kafka-data`, `chroma-data`, `models-data`, `kafka-streams-data`
 
 ---
 
@@ -527,53 +561,60 @@ rm -rf python-ml/chroma_db
 
 ```
 streaming-fraud-intelligence/
+├── Dockerfile.java              ← multi-stage: Maven build + Temurin 21 runtime
+├── Dockerfile.python            ← shared base for all 5 Python services
+├── docker-compose.yml           ← full stack: 10 services, 4 named volumes
+├── .dockerignore                ← excludes venv, chroma_db, mlruns from build context
+├── .gitattributes               ← enforces LF line endings for .sh files
+├── env.example                  ← template: GROQ_API_KEY + LangSmith vars
+├── setup-topics.sh              ← Kafka topic creation
 ├── src/main/java/com/agenticfraud/engine/
 │   ├── streaming/FraudStreams.java          ← Kafka Streams (KTable enrichment + KStream routing)
-│   ├── models/FraudDecision.java            ← data objects
+│   ├── models/FraudDecision.java            ← with fraudPattern field
 │   └── controllers/
-│       ├── FraudDetectionController.java    ← proxies to FastAPI /analyze and /health endpoints
-│       └── ConversationalController.java    ← proxies to FastAPI /investigation/chat endpoint
+│       ├── FraudDetectionController.java    ← proxies to FastAPI /analyze
+│       └── ConversationalController.java    ← proxies to FastAPI /investigation/chat
 ├── python-ml/
 │   ├── consumers/inference_consumer.py      ← XGBoost + RAG + AgentCoordinator
 │   ├── agents/
-│   │   ├── base_agent.py                    ← parse_llm_response(), _rag_instruction()
-│   │   ├── behavior_analyst.py              ← + per-agent RAG instruction
+│   │   ├── base_agent.py                    ← parse_llm_response(), _rag_instruction(), _build_rag_block()
+│   │   ├── behavior_analyst.py
 │   │   ├── pattern_detector.py
 │   │   ├── risk_assessor.py
 │   │   ├── geographic_analyst.py
 │   │   ├── temporal_analyst.py
-│   │   ├── agent_coordinator.py             ← brain of reasoning and analysis
-│   │   ├── feedback_embedder.py             ← embed ChromaDB with LLM decisions
-│   │   └── rag_retriever.py                 ← pure cosine similarity
+│   │   ├── agent_coordinator.py             ← 3-phase orchestration, LLM-driven confidence
+│   │   ├── feedback_embedder.py             ← LLM-decided fraudPattern → ChromaDB
+│   │   └── rag_retriever.py                 ← numpy cosine similarity (bypasses HNSW)
 │   ├── api/
 │   │   ├── server.py                        ← FastAPI /analyze + /chat + /health
-│   │   └── test_endpoints.py
+│   │   └── tests/test_endpoints.py          ← pytest integration tests
 │   ├── training/
-│   │   ├── train_xgboost.py
-│   │   └── online_learner.py
-│   ├── features/engineer.py                 ← 19 features
-│   ├── models/schemas.py                    ← data objects
-│   ├── monitoring/dashboard.py              ← Streamlit real-time
-│   ├── utils/pipeline_utils.py              ← helper methods
+│   │   ├── train_xgboost.py                 ← XGBoost + StandardScaler + MLflow
+│   │   └── online_learner.py                ← River SRPClassifier
+│   ├── features/engineer.py                 ← 19 Polars features
+│   ├── models/schemas.py                    ← FraudDecisionOutput + AgentInsightOutput
+│   ├── monitoring/dashboard.py              ← Streamlit + Plotly real-time dashboard
+│   ├── utils/pipeline_utils.py              ← shared build_streaming_context(), enriched_to_dict()
 │   ├── tests/
-│   │   ├── agents/test_agents.py            ← pytest all the agents
-│   │   └── api/test_endpoints.py            ← pytest fastAPI integration
+│   │   ├── agents/test_agents.py            ← pytest parametrized agent tests
+│   │   └── api/test_endpoints.py            ← pytest FastAPI fixture tests
 │   └── config.py
-├── docker-compose.yml
-└── setup-topics.sh
+└── pom.xml
 ```
 
 ---
 
 ## Future Enhancements
 
+- **GCP deployment** — GKE cluster with Strimzi operator for Kafka,
+  Artifact Registry for Docker images, Secret Manager for API keys
+- **Frontend UI** — React/Next.js transaction analyzer + chat panel
 - **Evidently drift detection** — monitor feature distribution on `enriched-transactions`,
   publish alerts to `model-health` topic
-- **Frontend UI** — React/Next.js transaction analyzer + chat panel
-- **LSTM sequence model** — TensorFlow temporal sequence scoring alongside XGBoost
+- **LSTM sequence model** — temporal sequence scoring alongside XGBoost
 - **Human analyst confirmation endpoint** — `actualFraud=true` to `analyst-feedback`
   for ground-truth RAG seeding (FastAPI endpoint already scaffolded)
-- **Kubernetes deployment** — Strimzi operator for Kafka, HPA for Python inference pods
 
 ---
 

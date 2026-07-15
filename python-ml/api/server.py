@@ -67,7 +67,7 @@ class ChatRequest(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-@app.post("/analyze", summary="Full ML ++ agent pipeline for a single transaction")
+@app.post("/analyze", summary="Full ML + agent pipeline for a single transaction")
 def analyze_transaction(request: AnalyzeRequest):
     """Synchronous fraud analysis — mirrors the Kafka Streams pipeline
     but for ad-hoc or interactive use.
@@ -126,7 +126,7 @@ def analyze_transaction(request: AnalyzeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/investigation/chat", summary="Conversational Q&A about the fraud detection system")
+@app.post("/investigation/chat", summary="Conversational Q&A chatbot about the fraud detection system")
 def chat_with_system(request: ChatRequest):
     """
     General conversational endpoint — answers questions about how the
