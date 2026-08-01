@@ -27,6 +27,8 @@ from config import settings
 from confluent_kafka import Consumer, KafkaError
 from sentence_transformers import SentenceTransformer
 
+from utils.pipeline_utils import get_chromadb_client
+
 logger = structlog.get_logger()
 
 # ── Embedding thresholds ──────────────────────────────────────────────────────
@@ -88,9 +90,7 @@ class FeedbackEmbedder:
         Creates collection if it doesn't exist, reuses if it does.
         On app restart, existing cases are preserved and available immediately.
         """
-        client = chromadb.PersistentClient(
-            path=settings.chroma_persist_dir,
-            settings=chromadb.Settings(anonymized_telemetry=False))
+        client = get_chromadb_client()
         collection = client.get_or_create_collection(
             name=settings.chroma_collection_fraud,
             metadata={

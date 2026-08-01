@@ -1,8 +1,8 @@
-from agents.base_agent import AgentInsight
 from config import settings
 from models.schemas import EnrichedTransaction, CustomerProfile
-
-
+import chromadb
+import structlog
+logger = structlog.get_logger()
 def build_streaming_context(
         enriched: EnrichedTransaction,
         fraud_score: float | None = None,
@@ -84,3 +84,16 @@ def enriched_to_dict(
         "customerRiskLevel": profile.riskLevel if profile else "UNKNOWN",
         "customerAvgAmount": profile.averageTransactionAmount if profile else 0,
     }
+
+def get_chromadb_client():
+    """
+    Returns a ChromaDB client - HttpClient in K8s (client-server mode, avoids multi-process HNSW corruption),
+    PersistentClient in local dev (local Docker Compose - simpler, no extra service required).
+    """
+    if settings.chroma_mode == "http":
+        logger.info("chromadb_using_http_client", url=f"http://{settings.chroma_host}:{settings.chroma_port}")
+        return chromadb.HttpClient(host=settings.chroma_host,
+                                   port=settings.chroma_port,
+                                   settings=chromadb.Settings(anonymized_telemetry=False))
+    logger.info("chromadb_using_persistent_client", path=settings.chroma_persist_dir)
+    return chromadb.PersistentClient(path=settings.chroma_persist_dir, settings=chromadb.Settings(anonymized_telemetry=False))

@@ -21,6 +21,8 @@ Consumes:
 import sys
 from pathlib import Path
 
+from utils.pipeline_utils import get_chromadb_client
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import json
@@ -73,10 +75,7 @@ def get_chromadb_collection():
     Returns None if collection does not exist yet.
     """
     try:
-        client = chromadb.PersistentClient(
-            path=settings.chroma_persist_dir,
-            settings=chromadb.Settings(anonymized_telemetry=False),
-        )
+        client = get_chromadb_client()
         return client.get_collection(name=settings.chroma_collection_fraud)
     except Exception:
         return None
