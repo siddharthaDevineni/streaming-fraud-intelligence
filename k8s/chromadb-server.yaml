@@ -1,0 +1,93 @@
+# ChromaDB running as a standalone server (client-server mode).
+#
+# This replaces the embedded PersistentClient approach used locally, which
+# caused HNSW index corruption when multiple processes (feedback_embedder,
+# inference_consumer) opened the same SQLite-backed directory concurrently.
+#
+# In client-server mode:
+#   - ChromaDB server is the ONLY process that touches the storage volume
+#   - All other services connect via chromadb.HttpClient(host=..., port=8000)
+#   - No concurrent file access — no corruption
+#   - Standard ReadWriteOnce volume works fine (single pod owns it)
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chroma-server-pvc
+  namespace: fraud-detection
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  storageClassName: standard-rwo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chromadb-server
+  namespace: fraud-detection
+spec:
+  replicas: 1     # single instance - source of truth
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: chromadb-server
+  template:
+    metadata:
+      labels:
+        app: chromadb-server
+    spec:
+      containers:
+      - name: chromadb-server
+        image: chromadb/chroma:0.6.3
+        ports:
+          - containerPort: 8000
+        env:
+          - name: IS_PERSISTENT
+            value: "TRUE"
+          - name: PERSIST_DIRECTORY
+            value: /data/chroma_db"
+          - name: ANONYMIZED_TELEMETRY
+            value: "FALSE"
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        volumeMounts:
+          - name: chroma-storage
+            mountPath: /data/chroma_db
+        livenessProbe:
+          httpGet:
+            path: /api/v1/heartbeat
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /api/v1/heartbeat
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+        - name: chroma-storage
+          persistentVolumeClaim:
+            claimName: chroma-server-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chromadb-server
+  namespace: fraud-detection
+spec:
+  type: ClusterIP # internal only service - inference-consumer, feedback_embedder, streamlit connect via chromadb.HttpClient(host=..., port=8000)
+  ports:
+    - port: 8000
+      targetPort: 8000
+  selector:
+    app: chromadb-server

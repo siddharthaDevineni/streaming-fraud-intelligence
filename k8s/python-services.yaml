@@ -1,0 +1,269 @@
+# Shared volumes for all Python services
+# - models-pvc: XGBoost model + scaler (read by inference + online learner)
+# - chroma-pvc: Chroma DB confirmed fraud cases (read/write by embedder + inference)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: models-pvc
+  namespace: fraud-detection
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: standard-rwo
+
+---
+# ------inference-consumer------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-consumer
+  namespace: fraud-detection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inference-consumer
+  template:
+    metadata:
+      labels:
+        app: inference-consumer
+    spec:
+      serviceAccountName: fraud-detection-sa
+      containers:
+        - name: inference-consumer
+          image: europe-west3-docker.pkg.dev/streaming-fraud-intelligence/streaming-fraud-intelligence/python-ml:latest
+          command: ["python", "-m", "consumers.inference_consumer"]
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+          env:
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: groq-api-key
+            - name: LANGCHAIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: langchain-api-key
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi # sentence-transformers model in memory
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: models-pvc
+# ── feedback-embedder ─────────────────────────────────────────────────────────
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: feedback-embedder
+  namespace: fraud-detection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: feedback-embedder
+  template:
+    metadata:
+      labels:
+        app: feedback-embedder
+    spec:
+      serviceAccountName: fraud-detection-sa
+      containers:
+        - name: feedback-embedder
+          image: europe-west3-docker.pkg.dev/streaming-fraud-intelligence/streaming-fraud-intelligence/python-ml:latest
+          command: ["python", "-m", "agents.feedback_embedder"]
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+
+# ── online-learner ────────────────────────────────────────────────────────────
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: online-learner
+  namespace: fraud-detection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: online-learner
+  template:
+    metadata:
+      labels:
+        app: online-learner
+    spec:
+      serviceAccountName: fraud-detection-sa
+      containers:
+        - name: online-learner
+          image: europe-west3-docker.pkg.dev/streaming-fraud-intelligence/streaming-fraud-intelligence/python-ml:latest
+          command: ["python", "-m", "training.online_learner"]
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: models-pvc
+
+# ── FastAPI ───────────────────────────────────────────────────────────────────
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi
+  namespace: fraud-detection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fastapi
+  template:
+    metadata:
+      labels:
+        app: fastapi
+    spec:
+      serviceAccountName: fraud-detection-sa
+      containers:
+        - name: fastapi
+          image: europe-west3-docker.pkg.dev/streaming-fraud-intelligence/streaming-fraud-intelligence/python-ml:latest
+          command: ["python", "-m", "uvicorn", "api.server:app",
+                    "--host", "0.0.0.0", "--port", "8000"]
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+          env:
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: groq-api-key
+            - name: LANGCHAIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: langchain-api-key
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"      # keep limits generous — bursts still allowed
+              memory: "2Gi"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: models-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi
+  namespace: fraud-detection
+spec:
+  selector:
+    app: fastapi
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+
+# ── Streamlit dashboard ───────────────────────────────────────────────────────
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streamlit
+  namespace: fraud-detection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: streamlit
+  template:
+    metadata:
+      labels:
+        app: streamlit
+    spec:
+      serviceAccountName: fraud-detection-sa
+      containers:
+        - name: streamlit
+          image: europe-west3-docker.pkg.dev/streaming-fraud-intelligence/streaming-fraud-intelligence/python-ml:latest
+          command: ["streamlit", "run", "monitoring/dashboard.py",
+                    "--server.port", "8501",
+                    "--server.address", "0.0.0.0",
+                    "--server.headless", "true"]
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+          env:
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: groq-api-key
+          ports:
+            - containerPort: 8501
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: streamlit
+  namespace: fraud-detection
+spec:
+  selector:
+    app: streamlit
+  ports:
+    - port: 8501
+      targetPort: 8501
+  type: LoadBalancer   # external IP — this is the public URL for the dashboard

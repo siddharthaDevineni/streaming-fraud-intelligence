@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-boot
+  namespace: fraud-detection
+spec:
+  replicas: 1 # Kafka Streams
+  selector:
+    matchLabels:
+      app: spring-boot
+  template:
+    metadata:
+      labels:
+        app: spring-boot
+    spec:
+      serviceAccountName: fraud-detection-sa
+      securityContext:
+        fsGroup: 999   # matches appuser's gid in Dockerfile.streams
+      containers:
+        - name: spring-boot
+          image: europe-west3-docker.pkg.dev/streaming-fraud-intelligence/streaming-fraud-intelligence/spring-boot:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+          env:
+            # Secrets from Secret Manager via Workload Identity
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: groq-api-key
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          volumeMounts:
+            - name: kafka-streams-state
+              mountPath: /tmp/kafka-streams
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 45
+            periodSeconds: 10
+      volumes:
+        - name: kafka-streams-state
+          emptyDir: {} # RocksDB state store
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spring-boot
+  namespace: fraud-detection
+spec:
+  type: ClusterIP # internal only - no external access required
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: spring-boot

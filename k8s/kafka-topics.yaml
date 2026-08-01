@@ -1,0 +1,113 @@
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: transactions
+  namespace: fraud-detection
+  labels:
+    strimzi.io/cluster: fraud-kafka
+spec:
+  partitions: 3
+  replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: customer-profiles
+  namespace: fraud-detection
+  labels:
+    strimzi.io/cluster: fraud-kafka
+spec:
+  topicName: customerProfiles
+  partitions: 3
+  replicas: 1
+  config:
+    cleanup.policy: compact   # KTable topic — keep latest value per key
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: enriched-transactions
+  namespace: fraud-detection
+  labels:
+    strimzi.io/cluster: fraud-kafka
+spec:
+  partitions: 3
+  replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: ml-predictions
+  namespace: fraud-detection
+  labels:
+    strimzi.io/cluster: fraud-kafka
+spec:
+  partitions: 3
+  replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: fraud-decisions
+  namespace: fraud-detection
+  labels:
+    strimzi.io/cluster: fraud-kafka
+spec:
+  partitions: 3
+  replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: fraud-alerts
+  namespace: fraud-detection
+  labels:
+    strimzi.io/cluster: fraud-kafka
+spec:
+  partitions: 3
+  replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: human-review
+  namespace: fraud-detection
+  labels:
+    strimzi.io/cluster: fraud-kafka
+spec:
+  partitions: 3
+  replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: approved-transactions
+  namespace: fraud-detection
+  labels:
+    strimzi.io/cluster: fraud-kafka
+spec:
+  partitions: 3
+  replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: analyst-feedback
+  namespace: fraud-detection
+  labels:
+    strimzi.io/cluster: fraud-kafka
+spec:
+  partitions: 3
+  replicas: 1
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: model-health
+  namespace: fraud-detection
+  labels:
+    strimzi.io/cluster: fraud-kafka
+spec:
+  partitions: 1
+  replicas: 1

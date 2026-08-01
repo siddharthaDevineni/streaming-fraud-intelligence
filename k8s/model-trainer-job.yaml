@@ -1,0 +1,37 @@
+# Trains XGBoost once and saves to the shared models-pvc volume.
+# Kubernetes Job — like Docker Compose's model-trainer with restart: no,
+# runs to completion once, then stops (does not restart on success).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-trainer
+  namespace: fraud-detection
+spec:
+  backoffLimit: 2 # 2 attempts on failure
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsUser: 0
+        fsGroup: 0
+      containers:
+        - name: model-trainer
+          image: europe-west3-docker.pkg.dev/streaming-fraud-intelligence/streaming-fraud-intelligence/python-ml:latest
+          command: [ "python", "-m", "training.train_xgboost" ]
+          envFrom:
+            - configMapRef:
+                name: fraud-detection-config
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: models-pvc
