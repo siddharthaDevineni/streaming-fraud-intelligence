@@ -44,8 +44,17 @@ public class TestDataGenerator {
     System.out.println("4. Mixed scenario");
     System.out.println("5. Continuous stream (Press Ctrl+C to stop)");
 
-    Scanner scanner = new Scanner(System.in);
-    int choice = scanner.nextInt();
+    // SCENARIO env var allows non-interactive runs (e.g., as a K8s Job with no
+    // attached terminal). Falls back to interactive Scanner for local/IDE use.
+    String scenarioEnv = System.getenv("SCENARIO");
+    int choice;
+    if (scenarioEnv != null && !scenarioEnv.isBlank()) {
+      choice = Integer.parseInt(scenarioEnv.trim());
+      System.out.println("Using SCENARIO env var: " + choice);
+    } else {
+      Scanner scanner = new Scanner(System.in);
+      choice = scanner.nextInt();
+    }
 
     switch (choice) {
       case 1 -> generateNormalTransactions(producer, customerProfiles, 3);

@@ -1,0 +1,40 @@
+# Runs TestDataGenerator as a one-shot Job inside the cluster network.
+# Talks to Kafka via the internal fraud-kafka-kafka-bootstrap:9092 address —
+# no port-forwarding, no exposing Kafka outside the cluster.
+#
+# Re-run for a new scenario:
+#   kubectl delete job test-data-generator -n fraud-detection --ignore-not-found
+#   kubectl apply -f k8s/test-data-generator-job.yaml
+#   kubectl logs -f job/test-data-generator -n fraud-detection
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: test-data-generator
+  namespace: fraud-detection
+spec:
+  backoffLimit: 0        # do not retry — a partial run would duplicate transactions
+  ttlSecondsAfterFinished: 3600   # auto-cleanup the Job object 1h after it finishes
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: test-data-generator
+          image: europe-west3-docker.pkg.dev/streaming-fraud-intelligence/streaming-fraud-intelligence/testgen:latest
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "fraud-kafka-kafka-bootstrap:9092"
+            # If TestDataGenerator prompts interactively for scenario choice,
+            # this pipes "2" (scenario 2) into stdin automatically.
+            # Update this value if your generator uses a different mechanism
+            # (e.g. a CLI arg or env var) to select the scenario.
+            - name: SCENARIO
+              value: "2"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+  

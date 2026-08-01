@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fraud-detection-config
+  namespace: fraud-detection
+data:
+  # Kafka — internal cluster address via Strimzi
+  KAFKA_BOOTSTRAP_SERVERS: "fraud-kafka-kafka-bootstrap:9092"
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "fraud-kafka-kafka-bootstrap:9092"
+
+  # Python ML service URL — FastAPI pod internal DNS
+  PYTHON_ML_SERVICE_URL: "http://fastapi:8000"
+
+  # ChromaDB — persistent volume mount path
+  CHROMA_PERSIST_DIR: "/data/chroma_db"
+
+  # ChromaDB — client-server mode via chromadb-server pod
+  CHROMA_MODE: "http"
+  CHROMA_HOST: "chromadb-server"
+  CHROMA_PORT: "8000"
+
+  # Model paths — persistent volume mount path
+  XGBOOST_MODEL_PATH: "/models/fraud_xgb.pkl"
+  SCALER_PATH: "/models/scaler.pkl"
+
+  # MLflow
+  MLFLOW_ALLOW_FILE_STORE: "true"
+  MLFLOW_TRACKING_URI: "/models/mlruns"
+
+  # LangChain
+  LANGCHAIN_TRACING_V2: "false"
+  LANGCHAIN_PROJECT: "streaming-fraud-intelligence"

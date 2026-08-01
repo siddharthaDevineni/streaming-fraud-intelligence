@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # ChromaDB
     chroma_persist_dir: str = "./chroma_db"
     chroma_collection_fraud: str = "confirmed_fraud_cases"
+    chroma_mode: str = "persistent" # persistent or http
+    chroma_host: str = "chromadb-server"
+    chroma_port: int = 8000
 
     # Model paths
     xgboost_model_path: str = "./models/fraud_xgb.pkl"

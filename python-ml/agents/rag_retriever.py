@@ -23,6 +23,8 @@ import structlog
 from config import settings
 from sentence_transformers import SentenceTransformer
 
+from utils.pipeline_utils import get_chromadb_client
+
 logger = structlog.get_logger()
 
 # How many similar cases to retrieve per transaction
@@ -67,8 +69,7 @@ class RAGRetriever:
 
     def _init_chromadb(self):
         """Connect to the same ChromaDB instance as feedback_embedder."""
-        client = chromadb.PersistentClient(path=settings.chroma_persist_dir,
-                                           settings=chromadb.Settings(anonymized_telemetry=False))
+        client = get_chromadb_client()
         try:
             collection = client.get_collection(
                 name=settings.chroma_collection_fraud,
@@ -233,15 +234,13 @@ class RAGRetriever:
         import numpy as np
 
         try:
-            client = chromadb.PersistentClient(
-                path=settings.chroma_persist_dir,
-                settings=chromadb.Settings(anonymized_telemetry=False),
-            )
+            client = get_chromadb_client()   # ← use the same shared, mode-aware client
             collection = client.get_collection(
                 name=settings.chroma_collection_fraud,
             )
             count = collection.count()
-        except Exception:
+        except Exception as e:
+            logger.warning("search_similar_client_failed", error=str(e))
             return []
 
         if count == 0:
