@@ -132,6 +132,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.streams
+      platforms:
+        - linux/amd64
     container_name: spring-boot
     networks:
       - fraud-net
@@ -163,11 +165,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ml
+      platforms:
+        - linux/amd64
     image: streaming-fraud-intelligence/python-ml:latest
     profiles:
       - build-only   # never starts as a container — build target only
 
-
+# ─── Model trainer────────────────────────────────────────────────────────
   model-trainer:
     image: streaming-fraud-intelligence/python-ml:latest
     container_name: model-trainer
@@ -187,6 +191,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ml
+      platforms:
+        - linux/amd64
     container_name: inference-consumer
     networks:
       - fraud-net
@@ -209,6 +215,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ml
+      platforms:
+        - linux/amd64
     container_name: feedback-embedder
     networks:
       - fraud-net
@@ -231,6 +239,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ml
+      platforms:
+        - linux/amd64
     container_name: online-learner
     networks:
       - fraud-net
@@ -252,6 +262,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ml
+      platforms:
+        - linux/amd64
     container_name: fastapi
     networks:
       - fraud-net
@@ -281,6 +293,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ml
+      platforms:
+        - linux/amd64
     container_name: streamlit
     networks:
       - fraud-net

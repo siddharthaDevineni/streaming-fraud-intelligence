@@ -1,0 +1,26 @@
+# Runs TestDataGenerator — a src/test/java class, not part of the production
+# app.jar (Maven only bundles src/main/java into the shipped artifact).
+#
+# This image includes the full Maven build environment + source, so
+# `mvn exec:java -Dexec.classpathScope=test` works exactly as it does locally.
+# It is intentionally separate from Dockerfile.streams (the lean, multi-stage,
+# JRE-only production image) — this one is a dev/test tool, not a deployable.
+
+FROM maven:3.9.9-eclipse-temurin-21
+
+WORKDIR /build
+
+# Cache dependency resolution — unchanged unless pom.xml changes
+COPY pom.xml .
+RUN mvn dependency:go-offline -q
+
+# Copy full source, including src/test/java where TestDataGenerator lives
+COPY src ./src
+
+# Pre-compile both main and test sources so no build happens at container
+# startup — only actual execution.
+RUN mvn test-compile -q -DskipTests
+
+ENTRYPOINT ["mvn", "exec:java", \
+  "-Dexec.mainClass=com.agenticfraud.engine.testing.TestDataGenerator", \
+  "-Dexec.classpathScope=test"]
