@@ -1,19 +1,19 @@
 # Streaming Fraud Intelligence
 
-> **Kafka Streams + XGBoost + LangChain Agents + ChromaDB RAG + River Online Learning — a self-improving fraud detection
+> **Kafka Streams + XGBoost + LangChain Agents + ChromaDB RAG + River Online Learning – a self-improving fraud detection
 pipeline**
 
-A hybrid Java/Python fraud detection system combining Kafka Streams real-time enrichment, XGBoost ML inference with SHAP
-explainability, ChromaDB RAG (historical and confirmed fraud case retrieval with chain-of-thought agent guidance),
-LangChain multi-agent LLM analysis, River online learning, and synchronous FastAPI endpoints — all wired as a continuous
-feedback loop.
+A distributed, cloud-native, event-driven fraud detection system — hybrid Java/Python microservices combining 
+Kafka Streams real-time enrichment, XGBoost ML inference with SHAP explainability, ChromaDB RAG (historical
+and confirmed fraud case retrieval with chain-of-thought agent guidance), LangChain multi-agent LLM analysis, 
+River online learning, and synchronous FastAPI endpoints — all wired as a continuous feedback loop.
 
-**Fully containerized — `docker compose up -d` starts all full stack services.**
+**Runs locally with `docker compose up -d`, or fully cloud-deployed on Kubernetes (GKE) with Strimzi Kafka, 
+Secret Manager, and Artifact Registry — see [Google Cloud Deployment](#google-cloud-deployment-gcp) below.**
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Siddhartha_Devineni-blue?style=flat&logo=linkedin)](https://www.linkedin.com/in/siddhartha-devineni/)
-[![Medium](https://img.shields.io/badge/Medium-Article-black?style=flat&logo=medium)](https://medium.com/@siddhartha.devineni/kafka-streams-make-ai-agents-fraud-detection-smarter-55fce4d6be3a)
-[![Dev.to](https://img.shields.io/badge/dev.to-Article-0A0A0A?style=flat&logo=devdotto)](https://dev.to/siddhartha_devineni_896e9/kafka-streams-make-ai-agents-fraud-detection-smarter-24c1)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat&logo=docker)](docker-compose.yml)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-GKE-326CE5?style=flat&logo=kubernetes)](k8s/README.md)
 
 ---
 
@@ -44,9 +44,8 @@ Five layers running concurrently and feeding each other:
 5. **River Online Learning** `Python` — `SRPClassifier` updating from the analyst-feedback
    Kafka topic in real time, no retraining cycle required
 
-Each layer feeds the next and the last feeds back into the first — analyst decisions flow
-back through Kafka into ChromaDB and River, making the system more accurate over time
-without manual intervention.
+Each layer feeds the next and the last feeds back into the first — analyst decisions flow back through Kafka into 
+ChromaDB and River, making the system more accurate over time without manual intervention.
 
 ---
 
@@ -88,6 +87,19 @@ that LLMs lack, and RAG provides the institutional memory that rules cannot enco
 **Key architectural decision:** All ML inference and LLM agent reasoning runs in Python.
 Java owns stateless and stateful stream processing layers (repartition, velocity windows, KTable joins, and
 routing). Python owns the entire intelligence layer. The two platforms communicate via Kafka topics.
+
+---
+
+## Google Cloud Deployment (GCP)
+
+In addition to local Docker Compose, this project deploys as a fully cloud-native stack on **Google Kubernetes Engine 
+(GKE Autopilot)**: Kafka runs via the **Strimzi Operator** in KRaft mode, secrets are managed through 
+**GCP Secret Manager**, every service ships as its own container image via **Artifact Registry**, and ChromaDB runs
+as a standalone client-server deployment shared across services — all orchestrated with a single idempotent 
+script, `k8s/deploy.sh`.
+
+→ See [k8s/README.md](./k8s/README.md) for prerequisites, secrets
+setup, full deployment steps, and GKE-specific architecture notes.
 
 ---
 
@@ -305,7 +317,7 @@ count — full end-to-end observability at `https://smith.langchain.com`.
 
 ---
 
-## Real Detection Examples
+## Detection Examples
 
 ### Example 1 — High-confidence fraud (98.5% confidence, 10 agents)
 
@@ -362,15 +374,14 @@ merchant. Auto-approved without human review.
 
 ## Known Architectural Trade-offs
 
-### 1. KStream-KTable join timing lag
+### KStream-KTable join timing lag
 
 Both the velocity KTable and Sub-topology 2 consume from `transactions` simultaneously
 (fan-out). Sub-topology 2 reads the velocity KTable before Sub-topology 1 has committed
 the current batch — so the first 2–4 transactions in a rapid-fire attack see stale velocity.
 
 **Root cause:** `selectKey()` creates a repartition topic boundary (`KSTREAM-KEY-SELECT-0000000015-repartition`). With
-`COMMIT_INTERVAL_MS=100ms` (reduced from 1000 ms) and transactions arriving every 200ms,
-the stale window covers ~2–4 transactions per burst.
+`COMMIT_INTERVAL_MS=100ms`  and transactions arriving every 200ms, the stale window covers ~2–4 transactions per burst.
 
 **Four-layer compensation mechanism:**
 
@@ -384,13 +395,6 @@ the stale window covers ~2–4 transactions per burst.
 
 **Measured:** 88.5% avg confidence for cold-start transactions (no RAG, stale velocity)
 vs 98.5% for transactions with RAG's historical context — system remains correct throughout.
-
-### 2. LLM-driven confidence vs formula-based tiers
-
-Agent confidence is now the consensus coordinator's own `RISK_SCORE` — the LLM
-assesses its certainty after reading all 10 agent insights plus RAG context. This
-produces variable confidence (85-99%) that meaningfully differentiates cold-start
-from RAG-informed decisions, rather than a hardcoded 90% for any 9+/10 agent agreement.
 
 ---
 
@@ -567,6 +571,14 @@ rm -rf python-ml/chroma_db
 - Kafka
 - Named volumes: `kafka-data`, `chroma-data`, `models-data`, `kafka-streams-data`
 
+**Cloud deployment (GCP):**
+
+- Google Kubernetes Engine (GKE Autopilot)
+- Strimzi Operator — Kafka in KRaft mode, deployed as `KafkaNodePool` CRs
+- Google Artifact Registry — private container image storage
+- Google Secret Manager — API key management via Kubernetes Workload Identity
+- Kubernetes Jobs (one-shot model training, test data generation), Deployments, ConfigMaps, PersistentVolumeClaims
+
 ---
 
 ## Project Structure
@@ -580,6 +592,12 @@ streaming-fraud-intelligence/
 ├── .gitattributes               ← enforces LF line endings for .sh files
 ├── env.example                  ← template: GROQ_API_KEY + LangSmith vars
 ├── setup-topics.sh              ← Kafka topic creation
+├── Dockerfile.testgen           ← TestDataGenerator image (src/test/java, needs Maven + full source)
+├── k8s/                         ← GKE deployment manifests + scripts (see k8s/README.md)
+│   ├── deploy.sh                ← single-command deploy: cluster, Strimzi, secrets, all services
+│   ├── build-and-push.sh        ← builds + pushes images to Artifact Registry (linux/amd64)
+│   ├── teardown.sh              ← tears down the namespace to stop GCP billing
+│   └── *.yaml                   ← namespace, Kafka, topics, ChromaDB server, app Deployments, Jobs
 ├── src/main/java/com/agenticfraud/engine/
 │   ├── streaming/FraudStreams.java          ← Kafka Streams (KTable enrichment + KStream routing)
 │   ├── models/FraudDecision.java            ← with fraudPattern field
@@ -619,8 +637,6 @@ streaming-fraud-intelligence/
 
 ## Future Enhancements
 
-- **GCP deployment** — GKE cluster with Strimzi operator for Kafka,
-  Artifact Registry for Docker images, Secret Manager for API keys
 - **Frontend UI** — React/Next.js transaction analyzer + chat panel
 - **Evidently drift detection** — monitor feature distribution on `enriched-transactions`,
   publish alerts to `model-health` topic
