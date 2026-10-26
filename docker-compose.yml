@@ -9,11 +9,13 @@
 # Services:
 #   kafka              → Kafka broker (KRaft mode, no ZooKeeper)
 #   kafka-ui           → Kafka UI at http://localhost:8090
+#   postgres           → PostgreSQL database at localhost:5432
 #   spring-boot        → Java: Kafka Streams enrichment + routing
 #   inference-consumer → Python: XGBoost + RAG + LangChain agents
 #   feedback-embedder  → Python: ChromaDB embedding pipeline
 #   online-learner     → Python: River SRPClassifier
-#   fastapi            → Python: synchronous REST endpoint
+#   fastapi            → Python: synchronous REST endpoint at http://localhost:8000
+#   analytics          → Python: PostgreSQL analytics API at http://localhost:8001
 #   streamlit          → Python: real-time dashboard at http://localhost:8501
 
 networks:
@@ -25,6 +27,7 @@ volumes:
   chroma-data:      # shared ChromaDB volume between embedder + inference
   models-data:      # XGBoost model + scaler shared between services
   kafka-streams-data:
+  postgres-data:    # PostgreSQL persistent storage
 
 # ── Shared environment snippets ───────────────────────────────────────────────
 x-kafka-env: &kafka-env
@@ -39,6 +42,7 @@ x-python-env: &python-env
   LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
   LANGCHAIN_API_KEY: ${LANGCHAIN_API_KEY:-}
   LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-streaming-fraud-intelligence}
+  POSTGRES_URL: postgresql://fraud_user:fraud_pass@postgres:5432/fraud_detection
 
 services:
 
@@ -97,6 +101,30 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
 
+  # ── PostgreSQL (persistent storage for audit trail & analytics) ────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    networks:
+      - fraud-net
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: fraud_detection
+      POSTGRES_USER: fraud_user
+      POSTGRES_PASSWORD: fraud_pass
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fraud_user -d fraud_detection"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
   # ── Topic setup (runs once then exits) ────────────────────────────────────
   kafka-setup:
     image: confluentinc/cp-kafka:7.8.0
@@ -133,7 +161,7 @@ services:
       context: .
       dockerfile: Dockerfile.streams
       platforms:
-        - linux/amd64
+        - linux/arm64
     container_name: spring-boot
     networks:
       - fraud-net
@@ -166,7 +194,7 @@ services:
       context: .
       dockerfile: Dockerfile.ml
       platforms:
-        - linux/amd64
+        - linux/arm64
     image: streaming-fraud-intelligence/python-ml:latest
     profiles:
       - build-only   # never starts as a container — build target only
@@ -192,7 +220,7 @@ services:
       context: .
       dockerfile: Dockerfile.ml
       platforms:
-        - linux/amd64
+        - linux/arm64
     container_name: inference-consumer
     networks:
       - fraud-net
@@ -216,7 +244,7 @@ services:
       context: .
       dockerfile: Dockerfile.ml
       platforms:
-        - linux/amd64
+        - linux/arm64
     container_name: feedback-embedder
     networks:
       - fraud-net
@@ -240,7 +268,7 @@ services:
       context: .
       dockerfile: Dockerfile.ml
       platforms:
-        - linux/amd64
+        - linux/arm64
     container_name: online-learner
     networks:
       - fraud-net
@@ -263,7 +291,7 @@ services:
       context: .
       dockerfile: Dockerfile.ml
       platforms:
-        - linux/amd64
+        - linux/arm64
     container_name: fastapi
     networks:
       - fraud-net
@@ -287,6 +315,34 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  # ── Analytics API (PostgreSQL query service) ───────────────────────────────
+  analytics:
+    image: streaming-fraud-intelligence/python-ml:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.ml
+      platforms:
+        - linux/arm64
+    container_name: analytics
+    networks:
+      - fraud-net
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "-m", "uvicorn", "analytics.analytics_service:app",
+              "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      <<: *python-env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
   # ── Streamlit dashboard ───────────────────────────────────────────────────
   streamlit:
     image: streaming-fraud-intelligence/python-ml:latest
@@ -294,7 +350,7 @@ services:
       context: .
       dockerfile: Dockerfile.ml
       platforms:
-        - linux/amd64
+        - linux/arm64
     container_name: streamlit
     networks:
       - fraud-net

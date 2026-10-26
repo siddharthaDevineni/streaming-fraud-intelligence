@@ -28,6 +28,7 @@ from confluent_kafka import Consumer, KafkaError
 from sentence_transformers import SentenceTransformer
 
 from utils.pipeline_utils import get_chromadb_client
+from db.postgres_client import get_postgres_client
 
 logger = structlog.get_logger()
 
@@ -50,6 +51,15 @@ class FeedbackEmbedder:
         self.consumer = self._create_consumer()
         self.embedding_model = self._load_embedding_model()
         self.collection = self._init_chromadb()
+
+        # Initialize PostgreSQL client for case review persistence
+        try:
+            self.postgres_client = get_postgres_client(settings.postgres_url)
+            logger.info("postgres_client_initialized")
+        except Exception as e:
+            logger.warning("postgres_client_init_failed", error=str(e),
+                          hint="Case review persistence disabled - will continue without database")
+            self.postgres_client = None
 
         # In-memory cache: transactionId → {features, mlScore, timestamp}
         # Used to join analyst-feedback with ml-predictions features
@@ -389,6 +399,71 @@ class FeedbackEmbedder:
             ml_score=ml_score,
             fraud_pattern=fraud_pattern
         )
+
+        # Persist case review to PostgreSQL
+        self._persist_case_review(txn_id, raw)
+
+    def _persist_case_review(self, transaction_id: str, feedback: dict):
+        """
+        Save analyst case review to PostgreSQL.
+
+        Stores feedback for:
+        - Analyst performance tracking
+        - Model accuracy evaluation (ground truth)
+        - Investigation audit trail
+        """
+        if not self.postgres_client:
+            return  # Postgres not available
+
+        try:
+            # Map feedback fields to case review schema
+            actual_fraud = feedback.get("actualFraud")
+            predicted_fraud = feedback.get("predictedFraud", False)
+
+            # Determine review outcome
+            if actual_fraud is True:
+                review_outcome = "CONFIRMED_FRAUD"
+            elif actual_fraud is False:
+                review_outcome = "FALSE_POSITIVE"
+            elif predicted_fraud:
+                review_outcome = "CONFIRMED_FRAUD"  # System confirmed fraud (high confidence)
+            else:
+                review_outcome = "LEGITIMATE"
+
+            confidence_level = (
+                "HIGH" if feedback.get("confidence", 0) >= 0.8
+                else "MEDIUM" if feedback.get("confidence", 0) >= 0.6
+                else "LOW"
+            )
+
+            self.postgres_client.save_case_review({
+                'transaction_id': transaction_id,
+                'analyst_id': feedback.get("analystId", "system"),  # "system" for auto-generated feedback
+                'review_outcome': review_outcome,
+                'notes': f"Pattern: {feedback.get('fraudPattern', 'unknown')}, Confidence: {feedback.get('confidence', 0):.2f}",
+                'time_to_review_seconds': feedback.get('reviewTimeSeconds'),  # May be None for auto-generated
+                'fraud_decision_id': None,  # Can be populated if we track decision IDs
+                'evidence_sources': {
+                    'fraudPattern': feedback.get('fraudPattern'),
+                    'predictedFraud': predicted_fraud,
+                    'actualFraud': actual_fraud,
+                    'confidence': feedback.get('confidence', 0)
+                },
+                'confidence_level': confidence_level
+            })
+
+            logger.debug(
+                "case_review_persisted",
+                transaction_id=transaction_id,
+                review_outcome=review_outcome
+            )
+
+        except Exception as e:
+            logger.error(
+                "case_review_persistence_failed",
+                transaction_id=transaction_id,
+                error=str(e)
+            )
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 

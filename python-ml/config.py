@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # Groq / LLM
     groq_api_key: str = "dummy-key"
     groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_model: str = "llama-3.1-8b-instant"
+    groq_model: str = "qwen/qwen3.8-27b"
 
     # MLflow
     mlflow_tracking_uri: str = "http://localhost:5000"
@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     chroma_mode: str = "persistent" # persistent or http
     chroma_host: str = "chromadb-server"
     chroma_port: int = 8000
+
+    # PostgreSQL
+    postgres_url: str = "postgresql://fraud_user:fraud_pass@localhost:5432/fraud_detection"
 
     # Model paths
     xgboost_model_path: str = "./models/fraud_xgb.pkl"

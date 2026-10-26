@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from features.engineer import extract_features, FEATURE_COLUMNS
 from models.schemas import EnrichedTransaction, MLPrediction, AgentInsightOutput, FraudDecisionOutput
 from pydantic import ValidationError
+from db.postgres_client import get_postgres_client
 
 logger = structlog.get_logger()
 
@@ -47,6 +48,16 @@ class MLInferenceService:
         self.scaler = self._load_scaler()
         self.explainer = shap.TreeExplainer(self.model)
         self.agent_coordinator = AgentCoordinator()
+
+        # Initialize PostgreSQL client for audit trail persistence
+        try:
+            self.postgres_client = get_postgres_client(settings.postgres_url)
+            logger.info("postgres_client_initialized")
+        except Exception as e:
+            logger.warning("postgres_client_init_failed", error=str(e),
+                          hint="Postgres persistence disabled - will continue without database")
+            self.postgres_client = None
+
         logger.info("ml_inference_service_started",
                     model_path=settings.xgboost_model_path)
 
@@ -242,6 +253,9 @@ class MLInferenceService:
             # Publish FraudDecision (Java reads this for routing — replaces agentCoordinator)
             self._publish_decision(fraud_decision, prediction)
 
+            # Persist to PostgreSQL for long-term audit trail (dual-write pattern)
+            self._persist_to_postgres(enriched, prediction, fraud_decision, shap_top3, latency_ms)
+
             logger.info(
                 "inference_complete",
                 transaction_id=enriched.transaction.transactionId,
@@ -322,6 +336,92 @@ class MLInferenceService:
         if risk_score >= 0.6:
             return "HUMAN_REVIEW"
         return "APPROVE"
+
+    def _persist_to_postgres(
+        self,
+        enriched: EnrichedTransaction,
+        prediction: MLPrediction,
+        fraud_decision: dict,
+        shap_top3: dict,
+        latency_ms: int
+    ):
+        """
+        Dual-write pattern: persist to PostgreSQL for long-term audit trail.
+
+        Saves:
+        - Transaction record (immutable audit trail)
+        - ML prediction (XGBoost score + SHAP values)
+        - Fraud decision (LLM consensus + RAG context)
+        """
+        if not self.postgres_client:
+            return  # Postgres not available, skip persistence
+
+        try:
+            # 1. Save transaction
+            self.postgres_client.save_transaction({
+                'transaction_id': enriched.transaction.transactionId,
+                'customer_id': enriched.transaction.customerId,
+                'amount': enriched.transaction.amount,
+                'merchant_id': enriched.transaction.merchantId,
+                'merchant_category': enriched.transaction.merchantCategory,
+                'location': enriched.transaction.location,
+                'device_id': enriched.transaction.metadata.get('deviceId'),
+                'timestamp': enriched.transaction.timestamp.replace(tzinfo=None),
+                'velocity_5min': enriched.velocityCount if enriched.velocityCount else 0,
+                'avg_transaction_amount': (
+                    enriched.customerProfile.averageTransactionAmount
+                    if enriched.customerProfile else None
+                ),
+                'account_age_days': None,  # Not available in CustomerProfile schema
+            })
+
+            # 2. Save ML prediction
+            shap_list = [{'feature': k, 'value': v} for k, v in shap_top3.items()]
+            self.postgres_client.save_model_prediction({
+                'transaction_id': enriched.transaction.transactionId,
+                'model_type': 'xgboost',
+                'prediction_score': prediction.mlFraudScore,
+                'top_features': shap_list,
+                'prediction_time_ms': latency_ms,
+                'model_version': prediction.modelVersion,
+            })
+
+            # 3. Save fraud decision
+            self.postgres_client.save_fraud_decision({
+                'transaction_id': enriched.transaction.transactionId,
+                'ml_score': prediction.mlFraudScore,
+                'ml_model_type': 'xgboost',
+                'shap_top_features': shap_list,
+                'llm_confidence': fraud_decision.get('confidenceScore', 0.0),
+                'fraud_pattern': fraud_decision.get('fraudPattern', 'unknown'),
+                'reasoning': fraud_decision.get('explanation', ''),
+                'recommendation': self._risk_to_recommendation(
+                    fraud_decision.get('confidenceScore', 0.0) / 100
+                ),
+                'rag_context_used': prediction.ragContext.get('casesFound', 0) > 0 if prediction.ragContext else False,
+                'rag_similarity_score': (
+                    prediction.ragContext.get('maxSimilarity', 0.0)
+                    if prediction.ragContext and prediction.ragContext.get('casesFound', 0) > 0
+                    else None
+                ),
+                'rag_cases_retrieved': prediction.ragContext.get('casesFound', 0) if prediction.ragContext else 0,
+                'decision': self._risk_to_recommendation(
+                    fraud_decision.get('confidenceScore', 0.0) / 100
+                ).replace('_ALERT', '').replace('_', ''),  # Convert to BLOCK/REVIEW/APPROVE
+            })
+
+            logger.debug(
+                "postgres_persistence_complete",
+                transaction_id=enriched.transaction.transactionId
+            )
+
+        except Exception as e:
+            logger.error(
+                "postgres_persistence_failed",
+                transaction_id=enriched.transaction.transactionId,
+                error=str(e),
+                hint="Kafka streaming continues unaffected"
+            )
 
 if __name__ == "__main__":
     service = MLInferenceService()
