@@ -1,12 +1,12 @@
 # Streaming Fraud Intelligence
 
-> **Kafka Streams + XGBoost + LangChain Agents + ChromaDB RAG + River Online Learning – a self-improving fraud detection
-pipeline**
+> **Kafka Streams + XGBoost + PostgreSQL + LangChain Agents + ChromaDB RAG + River Online Learning – a self-improving fraud detection pipeline with polyglot persistence**
 
-A distributed, cloud-native, event-driven fraud detection system — hybrid Java/Python microservices combining 
-Kafka Streams real-time enrichment, XGBoost ML inference with SHAP explainability, ChromaDB RAG (historical
-and confirmed fraud case retrieval with chain-of-thought agent guidance), LangChain multi-agent LLM analysis, 
-River online learning, and synchronous FastAPI endpoints — all wired as a continuous feedback loop.
+A distributed, cloud-native, event-driven fraud detection system — hybrid Java/Python microservices combining
+Kafka Streams real-time enrichment, XGBoost ML inference with SHAP explainability, PostgreSQL audit trail with
+dual-write pattern, ChromaDB RAG (historical and confirmed fraud case retrieval with chain-of-thought agent guidance),
+LangChain multi-agent LLM analysis, River online learning, and FastAPI endpoints for both transaction analysis
+and SQL analytics — all wired as a continuous feedback loop.
 
 **Runs locally with `docker compose up -d`, or fully cloud-deployed on Kubernetes (GKE) with Strimzi Kafka, 
 Secret Manager, and Artifact Registry — see [Google Cloud Deployment](#google-cloud-deployment-gcp) below.**
@@ -31,7 +31,7 @@ Secret Manager, and Artifact Registry — see [Google Cloud Deployment](#google-
 
 ## What this project covers
 
-Five layers running concurrently and feeding each other:
+Six layers running concurrently and feeding each other:
 
 1. **Kafka Streams** `Java` — real-time velocity windows, customer profile KTable joins,
    enriched-transactions topic
@@ -43,9 +43,12 @@ Five layers running concurrently and feeding each other:
    transaction across parallel and collaborative phases, with LangSmith observability
 5. **River Online Learning** `Python` — `SRPClassifier` updating from the analyst-feedback
    Kafka topic in real time, no retraining cycle required
+6. **PostgreSQL** `Dual-Write Pattern` — audit trail persistence with 6 normalized tables,
+   SQLAlchemy ORM, connection pooling, and FastAPI analytics service with 7 REST endpoints
 
-Each layer feeds the next and the last feeds back into the first — analyst decisions flow back through Kafka into 
-ChromaDB and River, making the system more accurate over time without manual intervention.
+Each layer feeds the next and the last feeds back into the first — analyst decisions flow back through Kafka into
+ChromaDB, River, and PostgreSQL, making the system more accurate and auditable over time without manual intervention.
+**Polyglot persistence:** Kafka for streaming (7-day retention), PostgreSQL for compliance (long term audit trail).
 
 ---
 
@@ -438,11 +441,13 @@ mvn exec:java \
 
 **Services and ports:**
 
-| Service             | URL                        | Description                                       |
-|---------------------|----------------------------|---------------------------------------------------|
+| Service             | URL                        | Description                                     |
+|---------------------|----------------------------|-------------------------------------------------|
 | Streamlit dashboard | http://localhost:8501      | Real-time Streaming Fraud Intelligence monitoring |
-| FastAPI             | http://localhost:8000/docs | Swagger UI + REST endpoints                       |
-| Kafka UI            | http://localhost:8090      | Topics browser + messages viewer                  |
+| FastAPI             | http://localhost:8000/docs | Transaction analysis + chat (Swagger UI)        |
+| Analytics API       | http://localhost:8001/docs | PostgreSQL analytics endpoints (fraud patterns) |
+| Kafka UI            | http://localhost:8090      | Topics browser + messages viewer                |
+| PostgreSQL          | localhost:5432             | Database (user: fraud_user, db: fraud_detection) |
 
 **Full reset:**
 
@@ -451,15 +456,15 @@ docker compose down -v   # removes all volumes (Kafka data, ChromaDB, models)
 docker compose up -d
 ```
 
-### Option B — Without Docker (8 terminals)
+### Option B — Without Docker (9 terminals + PostgreSQL)
 
 Use this if you want to modify Python code without rebuilding Docker images.
 
-**Prerequisites:** Java 21, Maven, Python 3.12, and Docker (for Kafka only)
+**Prerequisites:** Java 21, Maven, Python 3.12, Docker (for Kafka + PostgreSQL)
 
 ```bash
-# Terminal 0 — Kafka only via Docker
-docker compose up -d kafka kafka-ui
+# Terminal 0 — Kafka + PostgreSQL via Docker
+docker compose up -d kafka kafka-ui postgres
 ./setup-topics.sh
 
 # Configure environment (once)
@@ -497,10 +502,13 @@ python -m training.online_learner
 # Terminal 5 — FastAPI synchronous endpoint
 python -m api.server
 
-# Terminal 6 — Streamlit dashboard
+# Terminal 6 — Analytics API (PostgreSQL queries)
+python -m uvicorn analytics.analytics_service:app --host 0.0.0.0 --port 8001
+
+# Terminal 7 — Streamlit dashboard
 streamlit run monitoring/dashboard.py
 
-# Terminal 7
+# Terminal 8 — Test data generator
 mvn exec:java \
   -Dexec.mainClass="com.agenticfraud.engine.testing.TestDataGenerator" \
   -Dexec.classpathScope="test"
@@ -556,20 +564,27 @@ rm -rf python-ml/chroma_db
 - Polars 0.20 (feature engineering — 19 features)
 - MLflow (XGBoost training experiment tracking, file store backend)
 - River 0.21 `SRPClassifier` (online learning, no retraining needed)
-- ChromaDB 0.6.3 (persistent vector store, SQLite backend) + sentence-transformers `all-MiniLM-L6-v2` (384-dim, local,
-  CPU)
+- ChromaDB 0.6.3 (persistent vector store, SQLite backend) + sentence-transformers `all-MiniLM-L6-v2` (384-dim, local, CPU)
+- SQLAlchemy 2.0 + psycopg2-binary (PostgreSQL ORM with connection pooling)
 - LangChain + LangChain-Groq (agent orchestration) + LangSmith (full pipeline observability)
-- FastAPI + uvicorn (synchronous REST endpoint)
+- FastAPI + uvicorn (synchronous REST endpoints: transaction analysis + analytics)
 - confluent-kafka 2.3, Pydantic v2, structlog, httpx
 - Streamlit 1.59 + Plotly (real-time dashboard)
 
+**Database layer:**
+
+- PostgreSQL 16-alpine
+- 6 normalized tables (transactions, fraud_decisions, case_reviews, customers, model_predictions, feature_stats)
+- 20+ indexes (B-tree, GIN for JSONB), 3 SQL views
+- JSONB columns for ML features and SHAP explainability
+- Foreign keys, CHECK constraints, optimistic locking
+
 **Infrastructure:**
 
-- Docker and Docker Compose v2 — full stack containerization, 10 services total:
-    - 8 long-running (Kafka, Spring Boot, 5 Python microservices, Streamlit) and kafka-setup (topic creation, exits) +
-      model-trainer (one-shot training, exits)
-- Kafka
-- Named volumes: `kafka-data`, `chroma-data`, `models-data`, `kafka-streams-data`
+- Docker and Docker Compose v2 — full stack containerization, 12 services total:
+    - 10 long-running (Kafka, PostgreSQL, Spring Boot, 6 Python microservices, Streamlit)
+    - 2 one-shot (kafka-setup for topic creation, model-trainer)
+- Named volumes: `kafka-data`, `postgres-data`, `chroma-data`, `models-data`, `kafka-streams-data`
 
 **Cloud deployment (GCP):**
 
@@ -586,13 +601,15 @@ rm -rf python-ml/chroma_db
 ```
 streaming-fraud-intelligence/
 ├── Dockerfile.java              ← multi-stage: Maven build + Temurin 21 runtime
-├── Dockerfile.python            ← shared base for all 5 Python services
-├── docker-compose.yml           ← full stack: 10 services, 4 named volumes
+├── Dockerfile.python            ← shared base for all Python services
+├── docker-compose.yml           ← full stack: 12 services, 5 named volumes
 ├── .dockerignore                ← excludes venv, chroma_db, mlruns from build context
 ├── .gitattributes               ← enforces LF line endings for .sh files
 ├── env.example                  ← template: GROQ_API_KEY + LangSmith vars
 ├── setup-topics.sh              ← Kafka topic creation
 ├── Dockerfile.testgen           ← TestDataGenerator image (src/test/java, needs Maven + full source)
+├── postgres/
+│   └── init.sql                 ← PostgreSQL schema: 6 tables, 20+ indexes, 3 SQL views
 ├── k8s/                         ← GKE deployment manifests + scripts (see k8s/README.md)
 │   ├── deploy.sh                ← single-command deploy: cluster, Strimzi, secrets, all services
 │   ├── build-and-push.sh        ← builds + pushes images to Artifact Registry (linux/amd64)
@@ -605,7 +622,7 @@ streaming-fraud-intelligence/
 │       ├── FraudDetectionController.java    ← proxies to FastAPI /analyze
 │       └── ConversationalController.java    ← proxies to FastAPI /investigation/chat
 ├── python-ml/
-│   ├── consumers/inference_consumer.py      ← XGBoost + RAG + AgentCoordinator
+│   ├── consumers/inference_consumer.py      ← XGBoost + RAG + AgentCoordinator + Postgres persistence
 │   ├── agents/
 │   │   ├── base_agent.py                    ← parse_llm_response(), _rag_instruction(), _build_rag_block()
 │   │   ├── behavior_analyst.py
@@ -614,16 +631,21 @@ streaming-fraud-intelligence/
 │   │   ├── geographic_analyst.py
 │   │   ├── temporal_analyst.py
 │   │   ├── agent_coordinator.py             ← 3-phase orchestration, LLM-driven confidence
-│   │   ├── feedback_embedder.py             ← LLM-decided fraudPattern → ChromaDB
+│   │   ├── feedback_embedder.py             ← LLM-decided fraudPattern → ChromaDB + Postgres
 │   │   └── rag_retriever.py                 ← numpy cosine similarity (bypasses HNSW)
 │   ├── api/
 │   │   ├── server.py                        ← FastAPI /analyze + /chat + /health
 │   │   └── tests/test_endpoints.py          ← pytest integration tests
+│   ├── analytics/
+│   │   └── analytics_service.py             ← FastAPI analytics (port 8001): fraud patterns, SLA metrics
+│   ├── db/
+│   │   ├── models.py                        ← SQLAlchemy ORM models (6 tables)
+│   │   └── postgres_client.py               ← Repository pattern, connection pooling (QueuePool)
 │   ├── training/
 │   │   ├── train_xgboost.py                 ← XGBoost + StandardScaler + MLflow
 │   │   └── online_learner.py                ← River SRPClassifier
 │   ├── features/engineer.py                 ← 19 Polars features
-│   ├── models/schemas.py                    ← FraudDecisionOutput + AgentInsightOutput
+│   ├── models/schemas.py                    ← Pydantic models (FraudDecisionOutput + AgentInsightOutput)
 │   ├── monitoring/dashboard.py              ← Streamlit + Plotly real-time dashboard
 │   ├── utils/pipeline_utils.py              ← shared build_streaming_context(), enriched_to_dict()
 │   ├── tests/

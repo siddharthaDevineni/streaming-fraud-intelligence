@@ -31,6 +31,10 @@ langchain-groq>=0.1.0
 # Experiment tracking
 mlflow>=2.13.0
 
+# Database (PostgreSQL)
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+
 # Dashboard
 streamlit>=1.33.0
 plotly>=5.18.0
